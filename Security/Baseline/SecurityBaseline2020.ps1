@@ -1,7 +1,7 @@
 #=====================================================================================================
 # Created on:   14.01.2021
 # Created by:   Mattias Melkersen
-# Version:	    1.0.0  
+# Version:	    0.1  
 # Mail:		    mm@mindcore.dk
 # Twitter:      MMelkersen
 # Function:     Baseline security that currently not supported by any configuration policies in Intune
