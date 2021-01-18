@@ -82,25 +82,7 @@ Param(
 	 </toast>
 "@
 	 
-#Build XML ActionTemplateSnooze (Used when $Snooze is passed as a parameter)
-[xml]$ActionTemplateSnooze = @"
-	 <toast>
-		 <actions>
-			 <input id="SnoozeTimer" type="selection" title="Select a Snooze Interval" defaultInput="1">
-				 <selection id="1" content="1 Minute"/>
-				 <selection id="30" content="30 Minutes"/>
-				 <selection id="60" content="1 Hour"/>
-				 <selection id="120" content="2 Hours"/>
-				 <selection id="240" content="4 Hours"/>
-			 </input>
-			 <action activationType="system" arguments="snooze" hint-inputId="SnoozeTimer" content="$SnoozeTitle" id="test-snooze"/>
-			 <action arguments="$ButtonAction" content="$ButtonTitle" activationType="protocol" />
-			 <action arguments="dismiss" content="Dismiss" activationType="system"/>
-		 </actions>
-	 </toast>
-"@
-	 
-#Build XML ActionTemplate (Used when $Snooze is not passed as a parameter)
+#Build XML ActionTemplate 
 [xml]$ActionTemplate = @"
 	 <toast>
 		 <actions>
