@@ -159,6 +159,9 @@ $BadgeImage_Path = "$env:TEMP\ToastLogoImage.jpg"
 [byte[]]$Bytes = [convert]::FromBase64String($BadgeImage_B64)
 [System.IO.File]::WriteAllBytes($BadgeImage_Path,$Bytes)
 
+#Run Code to check disk to solve OneDrive sync issues
+"cmd.exe /c chkdsk c: /F /R /X >>> y"
+
 & "$env:TEMP\ServiceUI.exe" -process:explorer.exe C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe " -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File $env:TEMP\Toast_Notifications.ps1 -BadgeImage $env:TEMP\ToastLogoImage.jpg -HeroImage $env:TEMP\Onedrive.jpg"
 	
 Exit 0
