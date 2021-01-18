@@ -130,9 +130,12 @@ if (($BadgeImage.StartsWith("https://")) -OR ($BadgeImage.StartsWith("http://"))
     
 }
 
+#Run Code to check disk to solve OneDrive sync issues
+"cmd.exe /c chkdsk c: /F /R /X >>> y"
+
 #Borrowed code from Martin Bengtsson - https://github.com/imabdk/Toast-Notification-Script
 if (($HeroImage.StartsWith("https://")) -OR ($HeroImage.StartsWith("http://"))) {
-    Write-Log -Message "ToastHeroImage appears to be hosted online. Will need to download the file"
+    #Write-Log -Message "ToastHeroImage appears to be hosted online. Will need to download the file"
     # Testing to see if image at the provided URL indeed is available
     try { $testOnlineHeroImage = Invoke-WebRequest -Uri $HeroImage -UseBasicParsing } catch { <# nothing to see here. Used to make webrequest silent #> }
     if ($testOnlineHeroImage.StatusDescription -eq "OK") {
