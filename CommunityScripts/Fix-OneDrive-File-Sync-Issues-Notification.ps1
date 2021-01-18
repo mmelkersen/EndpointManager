@@ -91,19 +91,8 @@ Param(
 		 </actions>
 	 </toast>
 "@
-	 
-	 
-#If the Snooze parameter was passed, add additional XML elements to Toast
-If ($Snooze) {
 
-	#Define default and snooze actions to be added $ToastTemplate
-	$Action_Node = $ActionTemplateSnooze.toast.actions
-}
-else {
-
-	#Define default actions to be added $ToastTemplate
-	$Action_Node = $ActionTemplate.toast.actions
-}
+$Action_Node = $ActionTemplate.toast.actions
 
 #Append actions to $ToastTemplate
 [void]$ToastTemplate.toast.AppendChild($ToastTemplate.ImportNode($Action_Node, $true))
