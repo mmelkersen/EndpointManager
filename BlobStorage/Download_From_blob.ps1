@@ -29,9 +29,9 @@ $BlobProperties = @{
     container            = 'xxx'
 }
 
-if (!(test-path "C:\LogsFromAzure"))
+if (!(test-path "C:\temp\Logs"))
 {
-    New-Item -ItemType Directory -Path "C:\LogsFromAzure"
+    New-Item -ItemType Directory -Path "C:\temp\Logs"
 }
 
 $clientContext = New-AzureStorageContext -SasToken ($BlobProperties.storsas) -StorageAccountName ($blobproperties.StorageAccountName)
@@ -41,13 +41,13 @@ $files = Get-AzureStorageBlob -Container ($BlobProperties.container) -Context $c
 foreach ($file in $files)
 {
     write-host $file.name
-    Get-AzureStorageBlobContent -Destination "C:\LogsFromAzure" -Container ($BlobProperties.container) -Context $clientContext -Blob $file.name
+    Get-AzureStorageBlobContent -Destination "C:\temp\Logs" -Container ($BlobProperties.container) -Context $clientContext -Blob $file.name
    
     write-host "expanding logfiles"
-    Expand-Archive -Path "C:\LogsFromAzure\$($file.name)" -DestinationPath "C:\LogsFromAzure"
+    Expand-Archive -Path "C:\temp\Logs\$($file.name)" -DestinationPath "C:\temp\Logs"
 
     write-host "cleaning up"
-    Remove-Item -Path "C:\LogsFromAzure\$($file.name)" -Force
+    Remove-Item -Path "C:\temp\Logs\$($file.name)" -Force
 
     Remove-AzureStorageBlob -Container ($BlobProperties.container) -Context $clientContext -Blob $file.name
   

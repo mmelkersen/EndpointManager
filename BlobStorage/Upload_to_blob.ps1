@@ -31,11 +31,9 @@ $BlobProperties = @{
 
 $TSHostname = $env:computername
 
-write-host "Hostname will be : $TSHostname"
-
 $hostname = ($TSHostname).tolower()
 $Timestamp = get-date -f yyyy-MM-dd-HH-mm-ss
-$localpath = "C:\LogsToAzure\$hostname-$Timestamp"
+$localpath = "C:\temp\Logs\$hostname-$Timestamp"
 
 New-Item -ItemType Directory -Path $localpath -Force
 New-Item -ItemType Directory -Path $localpath\Panther -Force
@@ -48,10 +46,8 @@ Get-ChildItem -Path C:\Windows\Logs\Software | Copy-Item -Destination $localpath
 Get-ChildItem -Path C:\Windows\CCM\Logs | Copy-Item -Destination $localpath\CCM -Recurse
 Get-ChildItem -Path C:\Windows\Logs\Dism | Copy-Item -Destination $localpath\Dism -Recurse
 
-write-host "compressing logfiles"
-Compress-Archive -Path $localpath -DestinationPath "C:\LogsToAzure\$hostname-$Timestamp.zip"
+Compress-Archive -Path $localpath -DestinationPath "C:\temp\Logs\$hostname-$Timestamp.zip"
 
-write-host "upload to azure"
 $clientContext = New-AzureStorageContext -SasToken ($BlobProperties.storsas) -StorageAccountName ($blobproperties.StorageAccountName)
 
 Set-AzureStorageBlobContent -Context $ClientContext -container ($BlobProperties.container) -File "C:\LogsToAzure\$hostname-$Timestamp.zip"
