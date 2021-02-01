@@ -50,4 +50,4 @@ Compress-Archive -Path $localpath -DestinationPath "C:\temp\Logs\$hostname-$Time
 
 $clientContext = New-AzureStorageContext -SasToken ($BlobProperties.storsas) -StorageAccountName ($blobproperties.StorageAccountName)
 
-Set-AzureStorageBlobContent -Context $ClientContext -container ($BlobProperties.container) -File "C:\LogsToAzure\$hostname-$Timestamp.zip"
+Set-AzureStorageBlobContent -Context $ClientContext -container ($BlobProperties.container) -File "C:\temp\Logs\$hostname-$Timestamp.zip"
