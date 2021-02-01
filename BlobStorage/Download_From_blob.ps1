@@ -24,9 +24,9 @@ Import-Module azure.storage
 
 $BlobProperties = @{
 
-    StorageAccountName   = 'mindlabstorage'
-    storSas              = '?sp=racwdl&st=2021-01-29T11:14:39Z&se=2021-01-30T11:14:39Z&sv=2019-12-12&sr=c&sig=hlGukRFNPifzFgBNG8RMhlWg%2Fh9hNKrLOdQ%2FPZcMHTI%3D'
-    container            = 'osdlogs'
+    StorageAccountName   = 'xxx'
+    storSas              = 'xxx'
+    container            = 'xxx'
 }
 
 if (!(test-path "C:\LogsFromAzure"))

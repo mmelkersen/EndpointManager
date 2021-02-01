@@ -24,9 +24,9 @@ Import-Module azure.storage
 
 $BlobProperties = @{
 
-    StorageAccountName   = 'mindlabstorage'
-    storSas              = '?sp=racwl&st=2021-01-29T10:58:49Z&se=2025-01-28T10:58:00Z&sv=2019-12-12&sr=c&sig=rjiuR%2FxVC2IY51sy2rprJLwEUeCAHU9OpHGPYlwLTZw%3D'
-    container            = 'osdlogs'
+    StorageAccountName   = 'xxx'
+    storSas              = 'xxx'
+    container            = 'xxx'
 }
 
 $TSHostname = $env:computername
