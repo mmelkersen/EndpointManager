@@ -6,23 +6,21 @@
  Version:       0.1  
  Mail:          mm@mindcore.dk
  twitter:       @mmelkersen
- Function:      Detection script if .net 3.5 windows feature has been enabled.
+ Function:      Remediation script if .net 3.5 windows feature has been enabled. Use it together with ProActive Remediation.
 
+ 
  This script is provided As Is
  Compatible with Windows 10 and later
 ======================================================================================================
 
 #>
 
-$DotNetState = Get-WindowsOptionalFeature -Online -FeatureName 'NetFx3'
-
-If ($DotNetState.State -eq "Enabled")
+Try 
     {
-        Write-Host "Net 3.5 state Enabled"
-        Exit 0
+        Enable-WindowsOptionalFeature -Online -FeatureName 'NetFx3' -NoRestart
+        Write-Host "Installed .Net 3.5 Successfully"
     }
-    else
+    catch
     {
-        Write-Host "Net 3.5 state Disabled"
-        Exit 1
+        Write-Host ".net 3.5 installation failed"
     }
