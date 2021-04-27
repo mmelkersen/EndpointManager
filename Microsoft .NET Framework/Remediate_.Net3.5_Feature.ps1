@@ -33,6 +33,16 @@ Function Write_Log
 		Add-Content $LogFile  "$MyDate - $Message_Type : $Message"  
 	} 
 
+    if (!(test-path "C:\ProgramData\Microsoft\IntuneManagementExtension\Logs"))
+        {
+            New-Item -ItemType Directory -Path "C:\ProgramData\Microsoft\IntuneManagementExtension\Logs"
+            Write_Log -Message_Type "INFO" -Message "Created folder"
+        }
+        else 
+        {
+            Write_Log -Message_Type "INFO" -Message "Folder existed"
+        }
+
     Write_Log -Message_Type "INFO" -Message "Script started!"
     Write-Host "Script started!" -BackgroundColor Blue
     $DotNetState = Get-WindowsOptionalFeature -Online -FeatureName 'NetFx3'
@@ -107,6 +117,28 @@ Function Write_Log
                 }
             }
             
+            if (!(test-path $fileDestination))
+            {
+                    $msg = "Unable to find'$($fileDestination)'"
+                    Write-Host $msg -BackgroundColor Blue
+                    Write_Log -Message_Type "WARNING" -Message $msg
+            }
+            else 
+            {
+                #Extract Zip File
+                $msg = 'Starting unzipping the GitHub Repository locally'
+                Write-Host $msg -BackgroundColor Blue
+                Write_Log -Message_Type "INFO" -Message $msg
+                Expand-Archive -Path $fileDestination -DestinationPath $DestinationPath -Force
+                $msg = 'Unzip finished' 
+                Write-Host $msg -BackgroundColor Blue
+                Write_Log -Message_Type "INFO" -Message $msg
+
+                # remove the zip file
+                Remove-Item -Path $fileDestination -Force
+            }
+    
+     
             $msg = "Running Command: dism /online /enable-feature /featurename:NetFX3 /all /Source:$($DestinationPath) /LimitAccess"
             Write-Host $msg -BackgroundColor Blue
             Write_Log -Message_Type "INFO" -Message $msg
