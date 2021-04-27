@@ -32,61 +32,93 @@ Function Write_Log
 		Add-Content $LogFile  "$MyDate - $Message_Type : $Message"  
 	} 
 
-
-    #Get build number
-    $WindowsVersion = Get-ComputerInfo WindowsVersion
-    Write_Log -Message_Type "INFO" -Message $WindowsVersion
-
-    #Check if C:\Windows\temp\WinSXS exists
-    if (!(test-path "C:\temp\NetFX\$($WindowsVersion.WindowsVersion)"))
+    $DotNetState = Get-WindowsOptionalFeature -Online -FeatureName 'NetFx3'
+    $DotNetState.State = "DisabledWithPayloadRemoved"
+    If ($DotNetState.State -eq "Enabled")
         {
-            New-Item -ItemType Directory -Path "C:\temp\NetFX\$($WindowsVersion.WindowsVersion)"
+            Write-Host "Net 3.5 state Enabled. Exiting!"
+            #Exit 0
         }
+        elseif ($DotNetState.State -eq "DisabledWithPayloadRemoved")
+        {
+            Write-Host "Net 3.5 state Disabled"
+            $msg = "NetFX State: " + $DotNetState.State
+            Write_Log -Message_Type "INFO" -Message 
+
+            #Get build number
+            $WindowsVersion = Get-ComputerInfo WindowsVersion
+            
+            $msg = "Windows version: " + $WindowsVersion.WindowsVersion
+            Write_Log -Message_Type "INFO" -Message $msg
+            
         
-    #Get files from Github    
-    [String]$DestinationPath = "C:\temp\NetFX\$($WindowsVersion.WindowsVersion)"
-    [String]$path = $path + "$($WindowsVersion.WindowsVersion)"
-    $baseUri = "https://api.github.com/"
-    $args = "repos/$Owner/$Repository/contents/$Path"
-    $wr = Invoke-WebRequest -Uri $($baseuri+$args)
-    $objects = $wr.Content | ConvertFrom-Json
-    $files = $objects | where {$_.type -eq "file"} | Select -exp download_url
-    $directories = $objects | where {$_.type -eq "dir"}
-    
-    $directories | ForEach-Object { 
-        DownloadFilesFromRepo -Owner $Owner -Repository $Repository -Path $_.path -DestinationPath $($DestinationPath+$_.name)
-    }
+            #Check if C:\Windows\temp\WinSXS exists
+            $msg = "Checking folder exists: C:\temp\NetFX\$($WindowsVersion.WindowsVersion)"
+            Write_Log -Message_Type "INFO" -Message $msg
+            if (!(test-path "C:\temp\NetFX\$($WindowsVersion.WindowsVersion)"))
+                {
+                    New-Item -ItemType Directory -Path "C:\temp\NetFX\$($WindowsVersion.WindowsVersion)"
+                    Write_Log -Message_Type "INFO" -Message "Created folder"
+                }
+                else 
+                {
+                    Write_Log -Message_Type "INFO" -Message "Folder existed"
+                }
+                
+            #Get files from Github    
+            Write_Log -Message_Type "INFO" -Message "Getting data from Github"
+            [String]$DestinationPath = "C:\temp\NetFX\$($WindowsVersion.WindowsVersion)"
+            [String]$path = $path + "$($WindowsVersion.WindowsVersion)"
+            $baseUri = "https://api.github.com/"
+            $args = "repos/$Owner/$Repository/contents/$Path"
+            $wr = Invoke-WebRequest -Uri $($baseuri+$args)
+            
+            $msg = "Invoking data from: $($baseuri+$args)"
+            Write_Log -Message_Type "INFO" -Message $msg
+            
+            $objects = $wr.Content | ConvertFrom-Json
+            $files = $objects | where {$_.type -eq "file"} | Select -exp download_url
+            $directories = $objects | where {$_.type -eq "dir"}
+            
+            $directories | ForEach-Object { 
+                DownloadFilesFromRepo -Owner $Owner -Repository $Repository -Path $_.path -DestinationPath $($DestinationPath+$_.name)
+            }
+        
+            foreach ($file in $files) {
+                $fileDestination = Join-Path $DestinationPath (Split-Path $file -Leaf)
+                try {
+                    Invoke-WebRequest -Uri $file -OutFile $fileDestination -ErrorAction Stop -Verbose
+                    $msg = "Grabbed '$($file)' to '$fileDestination'"
+                    Write_Log -Message_Type "INFO" -Message $msg
 
-    if (-not (Test-Path $DestinationPath)) {
-        # Destination path does not exist, let's create it
-        try {
-            New-Item -Path $DestinationPath -ItemType Directory -ErrorAction Stop
-        } catch {
-            throw "Could not create path '$DestinationPath'!"
+                } 
+                catch 
+                {
+                    $msg = "Unable to download '$($file.path)'"
+                    Write_Log -Message_Type "WARNING" -Message $msg
+                }
+            }
+            
+            $msg = "Running Command: dism /online /enable-feature /featurename:NetFX3 /all /Source:$($DestinationPath) /LimitAccess"
+            Write_Log -Message_Type "INFO" -Message $msg
+            #dism /online /enable-feature /featurename:NetFX3 /all /Source:$DestinationPath /LimitAccess
         }
-    }
-
-    foreach ($file in $files) {
-        $fileDestination = Join-Path $DestinationPath (Split-Path $file -Leaf)
-        try {
-            Invoke-WebRequest -Uri $file -OutFile $fileDestination -ErrorAction Stop -Verbose
-            "Grabbed '$($file)' to '$fileDestination'"
-        } catch {
-            throw "Unable to download '$($file.path)'"
+        elseif ($DotNetState.State -eq "Disabled")
+        {
+            Try 
+            {
+                Write_Log -Message_Type "INFO" -Message "Enabling NetFx3..."
+                Enable-WindowsOptionalFeature -Online -FeatureName 'NetFx3' -NoRestart
+                Write-Host "Installed .Net 3.5 Successfully"
+                Write_Log -Message_Type "INFO" -Message "Enabled NetFx3 Successfully"
+            }
+            catch
+            {
+                Write-Host ".net 3.5 installation failed"
+                Write_Log -Message_Type "WARNING" -Message "Failed to enable NetFx3"
+            }
         }
-    }
 
-    dism /online /enable-feature /featurename:NetFX3 /all /Source:$path /LimitAccess
 
-Try 
-    {
-        Write_Log -Message_Type "INFO" -Message "Enabling NetFx3..."
-        Enable-WindowsOptionalFeature -Online -FeatureName 'NetFx3' -NoRestart
-        Write-Host "Installed .Net 3.5 Successfully"
-        Write_Log -Message_Type "INFO" -Message "Enabled NetFx3 Successfully"
-    }
-    catch
-    {
-        Write-Host ".net 3.5 installation failed"
-        Write_Log -Message_Type "WARNING" -Message "Failed to enable NetFx3"
-    }
+
+
