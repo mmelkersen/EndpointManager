@@ -2,6 +2,7 @@
 ======================================================================================================
  
  Created on:    22.04.2021
+ Modified:      27.04.2021
  Created by:    Mattias Melkersen
  Version:       0.2  
  Mail:          mm@mindcore.dk
@@ -32,8 +33,10 @@ Function Write_Log
 		Add-Content $LogFile  "$MyDate - $Message_Type : $Message"  
 	} 
 
+    Write_Log -Message_Type "INFO" -Message "Script started!"
+    Write-Host "Script started!" -BackgroundColor Blue
     $DotNetState = Get-WindowsOptionalFeature -Online -FeatureName 'NetFx3'
-    $DotNetState.State = "DisabledWithPayloadRemoved"
+    
     If ($DotNetState.State -eq "Enabled")
         {
             Write-Host "Net 3.5 state Enabled. Exiting!"
@@ -41,19 +44,22 @@ Function Write_Log
         }
         elseif ($DotNetState.State -eq "DisabledWithPayloadRemoved")
         {
-            Write-Host "Net 3.5 state Disabled"
+            
             $msg = "NetFX State: " + $DotNetState.State
-            Write_Log -Message_Type "INFO" -Message 
+            Write-Host $msg -BackgroundColor Blue
+            Write_Log -Message_Type "INFO" -Message $msg
 
             #Get build number
             $WindowsVersion = Get-ComputerInfo WindowsVersion
             
             $msg = "Windows version: " + $WindowsVersion.WindowsVersion
+            Write-Host $msg -BackgroundColor Blue
             Write_Log -Message_Type "INFO" -Message $msg
             
         
             #Check if C:\Windows\temp\WinSXS exists
             $msg = "Checking folder exists: C:\temp\NetFX\$($WindowsVersion.WindowsVersion)"
+            Write-Host $msg -BackgroundColor Blue
             Write_Log -Message_Type "INFO" -Message $msg
             if (!(test-path "C:\temp\NetFX\$($WindowsVersion.WindowsVersion)"))
                 {
@@ -74,6 +80,7 @@ Function Write_Log
             $wr = Invoke-WebRequest -Uri $($baseuri+$args)
             
             $msg = "Invoking data from: $($baseuri+$args)"
+            Write-Host $msg -BackgroundColor Blue
             Write_Log -Message_Type "INFO" -Message $msg
             
             $objects = $wr.Content | ConvertFrom-Json
@@ -89,19 +96,24 @@ Function Write_Log
                 try {
                     Invoke-WebRequest -Uri $file -OutFile $fileDestination -ErrorAction Stop -Verbose
                     $msg = "Grabbed '$($file)' to '$fileDestination'"
+                    Write-Host $msg -BackgroundColor Blue
                     Write_Log -Message_Type "INFO" -Message $msg
-
                 } 
                 catch 
                 {
                     $msg = "Unable to download '$($file.path)'"
+                    Write-Host $msg -BackgroundColor Blue
                     Write_Log -Message_Type "WARNING" -Message $msg
                 }
             }
             
             $msg = "Running Command: dism /online /enable-feature /featurename:NetFX3 /all /Source:$($DestinationPath) /LimitAccess"
+            Write-Host $msg -BackgroundColor Blue
             Write_Log -Message_Type "INFO" -Message $msg
-            #dism /online /enable-feature /featurename:NetFX3 /all /Source:$DestinationPath /LimitAccess
+            dism /online /enable-feature /featurename:NetFX3 /all /LimitAccess /Source:$DestinationPath
+            Write_Log -Message_Type "INFO" -Message "NetFX installed used sources from Github!"
+            Write_Log -Message_Type "INFO" -Message "Done"
+            Write-Host "Done" -BackgroundColor Blue
         }
         elseif ($DotNetState.State -eq "Disabled")
         {
@@ -118,7 +130,3 @@ Function Write_Log
                 Write_Log -Message_Type "WARNING" -Message "Failed to enable NetFx3"
             }
         }
-
-
-
-
