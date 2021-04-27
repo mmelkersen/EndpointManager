@@ -13,15 +13,14 @@
  v0.2 - Thanks to @maleroytw for elaborating on devices with state: DisabledWithPayloadRemoved. This version will be able to get payload from Github and add it using /Limitaccess
 
  This script is provided As Is
- Compatible with Windows 10 and later
+ Compatible with Windows 10 1909 -> 20H2
 ======================================================================================================
 
 #>
 
-[String]$GithubPath = "https://github.com/mmelkersen/EndpointManager/blob/main/Microsoft%20.NET%20Framework/1909/Microsoft-Windows-NetFx3-OnDemand-Package~31bf3856ad364e35~amd64~en-US~.cab"
+[string]$Owner = "mmelkersen"
 [String]$Repository = "EndpointManager"
-[string]$Owner = "MattiasMelkersen"
-[String]$path = "Microsoft .NET Framework"
+[String]$path = "Microsoft .NET Framework/"
 [string]$Logfile = "C:\ProgramData\Microsoft\IntuneManagementExtension\Logs\Baseline.log" 
 Function Write_Log
 	{
@@ -33,21 +32,51 @@ Function Write_Log
 		Add-Content $LogFile  "$MyDate - $Message_Type : $Message"  
 	} 
 
+
     #Get build number
     $WindowsVersion = Get-ComputerInfo WindowsVersion
     Write_Log -Message_Type "INFO" -Message $WindowsVersion
 
     #Check if C:\Windows\temp\WinSXS exists
-    if (!(test-path "C:\Windows\temp"))
+    if (!(test-path "C:\temp\NetFX\$($WindowsVersion.WindowsVersion)"))
         {
-            New-Item -ItemType Directory -Path "C:\temp"
+            New-Item -ItemType Directory -Path "C:\temp\NetFX\$($WindowsVersion.WindowsVersion)"
         }
-
-    #Get files from Github
-    Invoke-WebRequest -Uri $GithubPath - -OutFile "C:\temp\test.cab"
+        
+    #Get files from Github    
+    [String]$DestinationPath = "C:\temp\NetFX\$($WindowsVersion.WindowsVersion)"
+    [String]$path = $path + "$($WindowsVersion.WindowsVersion)"
+    $baseUri = "https://api.github.com/"
+    $args = "repos/$Owner/$Repository/contents/$Path"
+    $wr = Invoke-WebRequest -Uri $($baseuri+$args)
+    $objects = $wr.Content | ConvertFrom-Json
+    $files = $objects | where {$_.type -eq "file"} | Select -exp download_url
+    $directories = $objects | where {$_.type -eq "dir"}
     
+    $directories | ForEach-Object { 
+        DownloadFilesFromRepo -Owner $Owner -Repository $Repository -Path $_.path -DestinationPath $($DestinationPath+$_.name)
+    }
 
-    dism /online /enable-feature /featurename:NetFX3 /all /Source:d:sourcessxs /LimitAccess
+    if (-not (Test-Path $DestinationPath)) {
+        # Destination path does not exist, let's create it
+        try {
+            New-Item -Path $DestinationPath -ItemType Directory -ErrorAction Stop
+        } catch {
+            throw "Could not create path '$DestinationPath'!"
+        }
+    }
+
+    foreach ($file in $files) {
+        $fileDestination = Join-Path $DestinationPath (Split-Path $file -Leaf)
+        try {
+            Invoke-WebRequest -Uri $file -OutFile $fileDestination -ErrorAction Stop -Verbose
+            "Grabbed '$($file)' to '$fileDestination'"
+        } catch {
+            throw "Unable to download '$($file.path)'"
+        }
+    }
+
+    dism /online /enable-feature /featurename:NetFX3 /all /Source:$path /LimitAccess
 
 Try 
     {
