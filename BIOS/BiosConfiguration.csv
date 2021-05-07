@@ -1,2 +1,4 @@
 Setting,Value;
 SecureBoot,Enable;
+VirtualizationTechnology,Enable;
+VTdFeature,Enable;
