@@ -2,3 +2,4 @@ Setting,Value;
 SecureBoot,Enable;
 VirtualizationTechnology,Enable;
 VTdFeature,Enable;
+Intel(R) Virtualization Technology,Enabled;
