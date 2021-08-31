@@ -3,12 +3,14 @@
  
  Created on:    31.08.2021
  Created by:    Mattias Melkersen
- Version:       0.1  
+ Version:       0.2  
  Mail:          mm@mindcore.dk
  twitter:       @mmelkersen
  Function:      Test URLs are open for Microsoft Online services
 
  Borrowed script parts from David Segura AutopilotOOBE
+ Big thanks to my colleague Sune Thomsen for doing review and final touch
+ 
  This script is provided As Is
  Compatible with Windows 10 and later
 ======================================================================================================
@@ -30,7 +32,7 @@ function Test-MicrosoftEndpointNetworks {
     $host.ui.RawUI.WindowTitle = $Title
     $host.UI.RawUI.BufferSize = New-Object System.Management.Automation.Host.size(2000,2000)
     $host.ui.RawUI.BackgroundColor = ($bckgrnd = 'Black')
-    Clear-Host
+    # Clear-Host
     #================================================
     #   Temp
     #================================================
@@ -41,7 +43,8 @@ function Test-MicrosoftEndpointNetworks {
     #   Transcript
     #================================================
     $Transcript = "$((Get-Date).ToString('yyyy-MM-dd-HHmmss'))-$Title-$testarea.log"
-    Start-Transcript -Path (Join-Path "$env:SystemDrive\Temp" $Transcript) -ErrorAction Ignore
+    $LogPath = Join-Path "$env:SystemDrive\Temp" $Transcript
+    Start-Transcript -Path $LogPath -ErrorAction Ignore | Out-Null
     #=======================================================================
     $Global:ProgressPreference = 'SilentlyContinue'
 
@@ -80,7 +83,8 @@ function Test-MicrosoftEndpointNetworks {
     #=======================================================================
     Write-Host -ForegroundColor DarkGray '========================================================================='
     $Global:ProgressPreference = 'Continue'
-    Stop-Transcript
+    Write-Host -ForegroundColor Cyan "Log path: $($LogPath)"
+    Stop-Transcript | Out-Null
 }
 
 
@@ -124,7 +128,7 @@ function Test-MicrosoftEndpointNetworks {
     #   Azure Active Directory | Office 365 IP Address and URL web service
     #   https://docs.microsoft.com/en-us/microsoft-365/enterprise/microsoft-365-ip-web-service?view=o365-worldwide
     #=======================================================================
-    Test-MicrosoftEndpointNetworks -ComputerNames "","","teams.microsoft.com","smtp.office365.com","security.microsoft.com","provisioningapi.microsoftonline.com","protection.office.com","passwordreset.microsoftonline.com","outlook.office365.com","outlook.office.com","office.live.com","nexus.microsoftonline-p.com","login-us.microsoftonline.com","loginex.microsoftonline.com","logincert.microsoftonline.com","login.windows.net","login.microsoftonline-p.com","login.microsoftonline.com","login.microsoft.com","graph.windows.net","graph.microsoft.com","device.login.microsoftonline.com","compliance.microsoft.com","companymanager.microsoftonline.com","clientconfig.microsoftonline-p.net","broadcast.skype.com","becws.microsoftonline.com","autologon.microsoftazuread-sso.com","api.passwordreset.microsoftonline.com","adminwebservice.microsoftonline.com","accounts.accesscontrol.windows.net","account.office.net","account.activedirectory.windowsazure.com","teams.microsoft.com","skypeforbusiness.com","sharepoint.com","security.microsoft.com","protection.outlook.com","protection.office.com","portal.cloudappsecurity.com","outlook.office.com","online.office.com","officeapps.live.com","msidentity.com","msftidentity.com","mail.protection.outlook.com","lync.com","compliance.microsoft.com","broadcast.skype.com" -Ports "443" -TestArea "Office 365 IP Address and URL Web Service"
+    Test-MicrosoftEndpointNetworks -ComputerNames "teams.microsoft.com","smtp.office365.com","security.microsoft.com","provisioningapi.microsoftonline.com","protection.office.com","passwordreset.microsoftonline.com","outlook.office365.com","outlook.office.com","office.live.com","nexus.microsoftonline-p.com","login-us.microsoftonline.com","loginex.microsoftonline.com","logincert.microsoftonline.com","login.windows.net","login.microsoftonline-p.com","login.microsoftonline.com","login.microsoft.com","graph.windows.net","graph.microsoft.com","device.login.microsoftonline.com","compliance.microsoft.com","companymanager.microsoftonline.com","clientconfig.microsoftonline-p.net","broadcast.skype.com","becws.microsoftonline.com","autologon.microsoftazuread-sso.com","api.passwordreset.microsoftonline.com","adminwebservice.microsoftonline.com","accounts.accesscontrol.windows.net","account.office.net","account.activedirectory.windowsazure.com","teams.microsoft.com","skypeforbusiness.com","sharepoint.com","security.microsoft.com","protection.outlook.com","protection.office.com","portal.cloudappsecurity.com","outlook.office.com","online.office.com","officeapps.live.com","msidentity.com","msftidentity.com","mail.protection.outlook.com","lync.com","compliance.microsoft.com","broadcast.skype.com" -Ports "443" -TestArea "Office 365 IP Address and URL Web Service"
 
 
     #=======================================================================
