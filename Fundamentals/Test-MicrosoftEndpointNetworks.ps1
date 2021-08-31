@@ -43,12 +43,6 @@ function Test-MicrosoftEndpointNetworks {
     $Transcript = "$((Get-Date).ToString('yyyy-MM-dd-HHmmss'))-$Title-$testarea.log"
     Start-Transcript -Path (Join-Path "$env:SystemDrive\Temp" $Transcript) -ErrorAction Ignore
     #=======================================================================
-    #   Networking Requirements
-    #=======================================================================
-    #Write-Host -ForegroundColor DarkGray '========================================================================='
-    #Write-Host -ForegroundColor Cyan "$((Get-Date).ToString('yyyy-MM-dd-HHmmss')) Test HTTPS Networking Requirements"
-    #Write-Host -ForegroundColor DarkGray "https://docs.microsoft.com/en-us/mem/autopilot/networking-requirements"
-
     $Global:ProgressPreference = 'SilentlyContinue'
 
     Write-Host -ForegroundColor DarkGray '========================================================================='
