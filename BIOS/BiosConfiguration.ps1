@@ -40,8 +40,13 @@ If ($Manufacturer -eq "LENOVO")
         Write_Log -Message_Type "INFO" -Message "Getting BIOS cloud configuration"
         $BIOSCSV = (New-Object System.Net.WebClient).DownloadString($GithubConf)
 
-        $CharArray =$BIOSCSV.Split(";")
+        $CharArray = $BIOSCSV.Split(";")
         $myArray = $CharArray | Select-Object -Skip 1
+        $myArray.Split('',[System.StringSplitOptions]::RemoveEmptyEntries)
+
+
+
+
 
         Write_Log -Message_Type "INFO" -Message "Config to apply "$BIOSCSV
 
@@ -64,7 +69,7 @@ If ($Manufacturer -eq "LENOVO")
             }	
 
         $bios = gwmi -class Lenovo_SetBiosSetting -namespace root\wmi 
-        ForEach($Settings in $myArray.Split('',[System.StringSplitOptions]::RemoveEmptyEntries))
+        ForEach($Settings in $charArray)#.Split('',[System.StringSplitOptions]::RemoveEmptyEntries))
             {
                 Write_Log -Message_Type "INFO" -Message "Change to do: $Settings"  
             
