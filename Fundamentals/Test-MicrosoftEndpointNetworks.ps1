@@ -3,14 +3,13 @@
  
  Created on:    31.08.2021
  Created by:    Mattias Melkersen
- Version:       0.2  
+ Version:       0.1  
  Mail:          mm@mindcore.dk
  twitter:       @mmelkersen
  Function:      Test URLs are open for Microsoft Online services
 
  Borrowed script parts from David Segura AutopilotOOBE
  Big thanks to my colleague Sune Thomsen for doing review and final touch
- 
  This script is provided As Is
  Compatible with Windows 10 and later
 ======================================================================================================
@@ -29,10 +28,11 @@ function Test-MicrosoftEndpointNetworks {
     #   Initialize
     #================================================
     $Title = 'Test-MicrosoftEndpointNetworks'
-    $host.ui.RawUI.WindowTitle = $Title
-    $host.UI.RawUI.BufferSize = New-Object System.Management.Automation.Host.size(2000,2000)
-    $host.ui.RawUI.BackgroundColor = ($bckgrnd = 'Black')
-    # Clear-Host
+    $console = $host.ui.rawui
+    $console.BackgroundColor = "Black"
+    $console.ForegroundColor = "White"
+    $console.WindowTitle = $Title
+    $console.BufferSize = New-Object System.Management.Automation.Host.size(2000,2000)
     #================================================
     #   Temp
     #================================================
@@ -87,7 +87,6 @@ function Test-MicrosoftEndpointNetworks {
     Stop-Transcript | Out-Null
 }
 
-
     #=======================================================================
     #   PowerShell Gallery
     #=======================================================================
@@ -135,4 +134,16 @@ function Test-MicrosoftEndpointNetworks {
     #   Windows Activation
     #   https://support.microsoft.com/en-us/topic/windows-activation-or-validation-fails-with-error-code-0x8004fe33-a9afe65e-230b-c1ed-3414-39acd7fddf52
     #=======================================================================
-    Test-MicrosoftEndpointNetworks -ComputerNames "validation-v2.sls.microsoft.com","validation.sls.microsoft.com","purchase.mp.microsoft.com","purchase.md.mp.microsoft.com","login.live.com","licensing.md.mp.microsoft.com","licensing.mp.microsoft.com","go.microsoft.com","displaycatalog.md.mp.microsoft.com","displaycatalog.mp.microsoft.com","activation-v2.sls.microsoft.com","activation.sls.microsoft.com" -Ports "443" -TestArea "Windows Activation" -Urls "http://crl.microsoft.com/pki/crl/products/MicProSecSerCA_2007-12-04.crl" 
+    Test-MicrosoftEndpointNetworks -ComputerNames "validation-v2.sls.microsoft.com","validation.sls.microsoft.com","purchase.mp.microsoft.com","purchase.md.mp.microsoft.com","login.live.com","licensing.md.mp.microsoft.com","licensing.mp.microsoft.com","go.microsoft.com","displaycatalog.md.mp.microsoft.com","displaycatalog.mp.microsoft.com","activation-v2.sls.microsoft.com","activation.sls.microsoft.com" -Ports "443" -TestArea "Windows Activation" -Urls "http://crl.microsoft.com/pki/crl/products/MicProSecSerCA_2007-12-04.crl"
+
+    #=======================================================================
+    #   Exit Script
+    #=======================================================================
+    if (!($host.name -match "ISE")) {
+        Write-Host -ForegroundColor DarkGray '========================================================================='
+        Write-Host "Press any key to continue..."
+        $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    }
+    else {
+        Exit 0
+    }
