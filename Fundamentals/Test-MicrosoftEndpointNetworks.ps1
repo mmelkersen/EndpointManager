@@ -61,6 +61,10 @@ function Test-MicrosoftEndpointNetworks {
                 }
                 else {
                     Write-Host -ForegroundColor Yellow "FAIL: $ComputerName [Port: $Port]"
+                    Write-Host -ForegroundColor DarkGray '========================================================================='
+                    Write-Host "Press any key to continue..."
+                    $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+                    Exit 1
                 }
             }
             catch {}
@@ -78,6 +82,10 @@ function Test-MicrosoftEndpointNetworks {
         }
         catch {
             Write-Host -ForegroundColor Yellow "FAIL: $Uri"
+            Write-Host -ForegroundColor DarkGray '========================================================================='
+            Write-Host "Press any key to continue..."
+            $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+            Exit 1
         }
     }
     #=======================================================================
@@ -143,7 +151,7 @@ function Test-MicrosoftEndpointNetworks {
     #=======================================================================
     if (!($host.name -match "ISE")) {
         Write-Host -ForegroundColor DarkGray '========================================================================='
-        Write-Host "Press any key to continue..."
+        Write-Host "SCRIPT PASSED OVERALL"
         $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     }
     else {
