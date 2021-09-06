@@ -38,14 +38,14 @@ function Test-MicrosoftEndpointNetworks {
     #================================================
     #   Temp
     #================================================
-    if (!(Test-Path "$env:SystemDrive\Temp")) {
-        New-Item -Path "$env:SystemDrive\Temp" -ItemType Directory -Force
+    if (!(Test-Path "$env:SystemDrive\Temp\MSIntune")) {
+        New-Item -Path "$env:SystemDrive\Temp\MSIntune" -ItemType Directory -Force
     }
     #================================================
     #   Transcript
     #================================================
     $Transcript = "$((Get-Date).ToString('yyyy-MM-dd-HHmmss'))-$Title-$testarea.log"
-    $LogPath = Join-Path "$env:SystemDrive\Temp" $Transcript
+    $LogPath = Join-Path "$env:SystemDrive\Temp\MSIntune" $Transcript
     Start-Transcript -Path $LogPath -ErrorAction Ignore | Out-Null
     #=======================================================================
     $Global:ProgressPreference = 'SilentlyContinue'
@@ -151,7 +151,9 @@ function Test-MicrosoftEndpointNetworks {
     #=======================================================================
     if (!($host.name -match "ISE")) {
         Write-Host -ForegroundColor DarkGray '========================================================================='
-        Write-Host "SCRIPT PASSED OVERALL"
+        Write-Host ""
+        Write-Host "Script Finalized"
+        Write-Host -ForegroundColor green "Overall verdict: PASS"
         $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     }
     else {
