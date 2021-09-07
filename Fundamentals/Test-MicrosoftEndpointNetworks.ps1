@@ -18,6 +18,10 @@
 
 #>
 
+# versioning script
+$Title = 'Test-MicrosoftEndpointNetworks'
+$ScriptVersion = '1.0'
+
 function Test-MicrosoftEndpointNetworks {
     [CmdletBinding()]
     param (
@@ -29,7 +33,6 @@ function Test-MicrosoftEndpointNetworks {
     #================================================
     #   Initialize
     #================================================
-    $Title = 'Test-MicrosoftEndpointNetworks'
     $console = $host.ui.rawui
     $console.BackgroundColor = "Black"
     $console.ForegroundColor = "White"
@@ -60,7 +63,9 @@ function Test-MicrosoftEndpointNetworks {
                     Write-Host -ForegroundColor DarkCyan "PASS: $ComputerName [Port: $Port]"
                 }
                 else {
-                    Write-Host -ForegroundColor Yellow "FAIL: $ComputerName [Port: $Port]"
+                    Write-Host ""
+                    Write-Host "Script version: $ScriptVersion"
+                    Write-Host -ForegroundColor Red "Overall verdict: FAIL $Uri"
                     Write-Host -ForegroundColor DarkGray '========================================================================='
                     Write-Host "Press any key to continue..."
                     $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
@@ -81,7 +86,8 @@ function Test-MicrosoftEndpointNetworks {
             }
         }
         catch {
-            Write-Host -ForegroundColor Yellow "FAIL: $Uri"
+            Write-Host "Script version: $ScriptVersion"
+            Write-Host -ForegroundColor Red "Overall verdict: FAIL $Uri"
             Write-Host -ForegroundColor DarkGray '========================================================================='
             Write-Host "Press any key to continue..."
             $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
@@ -153,6 +159,7 @@ function Test-MicrosoftEndpointNetworks {
         Write-Host -ForegroundColor DarkGray '========================================================================='
         Write-Host ""
         Write-Host "Script Finalized"
+        Write-Host "Script version: $ScriptVersion"
         Write-Host -ForegroundColor green "Overall verdict: PASS"
         $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     }
