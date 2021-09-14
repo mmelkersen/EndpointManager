@@ -155,12 +155,33 @@ function Test-MicrosoftEndpointNetworks {
     #=======================================================================
     #   Exit Script
     #=======================================================================
+    $ADSite = ((nltest /dsgetsite 2>&1)[0]).ToString()
+    if ($Adsite -Like "*ERROR*") 
+        {
+            $ADSiteNameResult = "Script did not run on a qualified network"
+        }
+    else 
+        {
+            $ADSiteNameResult = ("Script ran on site: {0}" -f $Adsite)
+        }
+
     if (!($host.name -match "ISE")) {
         Write-Host -ForegroundColor DarkGray '========================================================================='
         Write-Host ""
         Write-Host "Script Finalized"
         Write-Host "Script version: $ScriptVersion"
-        Write-Host -ForegroundColor green "Overall verdict: PASS"
+        If ($ADSiteNameResult -like "Script ran on site*")
+            {
+                Write-Host "$ADSiteNameResult"
+                Write-Host -ForegroundColor green "Overall verdict: PASS"
+            }
+        else 
+            {
+                Write-Host -ForegroundColor Red "$ADSiteNameResult"
+                Write-Host -ForegroundColor Red "Overall verdict: FAIL"
+            }
+        
+        
         $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     }
     else {
