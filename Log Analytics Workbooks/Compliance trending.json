@@ -1,0 +1,148 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "## Intune Compliance - trending\n---"
+      },
+      "name": "text - 2"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "union withsource=[\"$TableName\"] *\n| summarize Count=count() by TableName=[\"$TableName\"]\n| render barchart",
+        "size": 1,
+        "timeContext": {
+          "durationMs": 86400000
+        },
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "query - 2"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Set TimeRange and user"
+      },
+      "name": "text - 6"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "56f27f59-3a6a-46ea-98b7-a7b358e026c5",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "type": 4,
+            "value": {
+              "durationMs": 5184000000
+            },
+            "typeSettings": {
+              "selectableValues": [
+                {
+                  "durationMs": 300000
+                },
+                {
+                  "durationMs": 900000
+                },
+                {
+                  "durationMs": 1800000
+                },
+                {
+                  "durationMs": 3600000
+                },
+                {
+                  "durationMs": 14400000
+                },
+                {
+                  "durationMs": 43200000
+                },
+                {
+                  "durationMs": 86400000
+                },
+                {
+                  "durationMs": 172800000
+                },
+                {
+                  "durationMs": 259200000
+                },
+                {
+                  "durationMs": 604800000
+                },
+                {
+                  "durationMs": 1209600000
+                },
+                {
+                  "durationMs": 2419200000
+                },
+                {
+                  "durationMs": 2592000000
+                },
+                {
+                  "durationMs": 5184000000
+                },
+                {
+                  "durationMs": 7776000000
+                }
+              ]
+            }
+          },
+          {
+            "id": "880615f7-2a3f-45dd-b08b-8a1b4528db90",
+            "version": "KqlParameterItem/1.0",
+            "name": "username",
+            "type": 1,
+            "value": "",
+            "timeContext": {
+              "durationMs": 86400000
+            }
+          }
+        ],
+        "style": "pills",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "Choose Timerange and user"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "IntuneDeviceComplianceOrg \r\n| where UPN has \"{username}\"\r\n| project TimeGenerated, ComplianceState, DeviceName, UPN, LastContact, DeviceId\r\n| sort by TimeGenerated",
+        "size": 0,
+        "timeContext": {
+          "durationMs": 0
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "query - 6"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "\r\nlet ComplianceLogs= \r\nIntuneOperationalLogs  \r\n| where OperationName == \"Compliance\"  \r\n| project TimeGenerated, Properties; \r\nComplianceLogs \r\n| sort by TimeGenerated desc \r\n| join ( \r\nComplianceLogs \r\n| extend myJson = todynamic(Properties) \r\n| project-away Properties \r\n| extend IntuneDeviceId=tostring(myJson[\"IntuneDeviceId\"])\r\n| project TimeGenerated, IntuneDeviceId\r\n| summarize TimeGenerated=max(TimeGenerated) by IntuneDeviceId \r\n) on TimeGenerated \r\n| project-away TimeGenerated1, IntuneDeviceId   \r\n| extend myJson=todynamic(Properties) \r\n| project-away Properties \r\n| extend Description=tostring(myJson[\"Description\"]) \r\n| extend Description=tostring(extract(\"(.*?)_IID_.*\", 1, tostring(Description))) \r\n| extend Reason = tostring(extract(\"(.*?)\\\\.(.*)\", 2, tostring(Description))) \r\n| extend StartTimeUtc=tostring(myJson[\"StartTimeUtc\"]), UserName=tostring(myJson[\"UserName\"]), UserDisplayName=tostring(myJson[\"UserName\"]), DeviceHostName=tostring(myJson[\"DeviceHostName\"]), DeviceDNSName=tostring(myJson[\"DeviceDNSName\"]), DeviceOS=tostring(myJson[\"DeviceOperatingSystem\"])\r\n| extend dateandtime=format_datetime(todatetime(StartTimeUtc),'d-M-y h:m:s')\r\n| where UserName has \"{username}\"\r\n| summarize FailureCount=count() by UserName, UserDisplayName, Reason, DeviceHostName, DeviceOS, dateandtime\r\n| sort by UserName desc",
+        "size": 0,
+        "title": "Reason for incompliance",
+        "timeContext": {
+          "durationMs": 2592000000
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "Reason for incompliance"
+    }
+  ],
+  "fallbackResourceIds": [
+    "/subscriptions/c1bc6ba0-564c-4f4d-8d4d-af40de5140c5/resourcegroups/rg-loganalyticsworkspace/providers/microsoft.operationalinsights/workspaces/loganalyticsworkspace"
+  ],
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}
