@@ -12,7 +12,7 @@ Demo of registry changes
 ![alt text](https://github.com/mmelkersen/EndpointManager/blob/main/Intune%20Debug%20Tools/Find%20registry%20changes.gif)
 
 # History
----
+
 #### Version 1.0
 First release of the debug tool containting rerun win32 apps.
 
