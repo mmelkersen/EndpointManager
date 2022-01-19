@@ -18,6 +18,11 @@ First release of the debug tool containting rerun win32 apps.
 
 ---
 #### Version 1.1
+What is this addon going to help with?
+- What if you added a policy from Intune and wanted to see where it added values on the device?
+- What if you wanted to know if IME is actually is refreshing its registry and check for the installed apps are installed?
+- Did anyone push new GPO's policies to your device? If you are transitioning to Intune with hybrid identity you like to know what goes on.
+
 Added 5 shortcuts to view registry changes from the last 36 hours. (could be done via sysinternals tools. This is just so much easier.)
 - Shortcut1: DEBUG - GPO changes last 36 hours (looking for changes in registry: HKLM:\Software\policies)
 - Shortcut2: DEBUG - Enrollment changes last 36 hours (looking for changes in registry: HKLM:\Software\Microsoft\Enrollments)
