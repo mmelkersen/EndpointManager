@@ -5,8 +5,11 @@ This article provides resources and tips for using the Microsoft Intune debug to
 - Rerun win32 tool
 - View registry changes Microsoft Intune related last 36 hours
 
+Demo of Rerun win32 tool
 ![alt text](https://github.com/mmelkersen/EndpointManager/blob/main/Intune%20Debug%20Tools/Rerun%20Win32%20apps.gif)
 
+Demo of registry changes
+![alt text](https://github.com/mmelkersen/EndpointManager/blob/main/Intune%20Debug%20Tools/Find%20registry%20changes.gif)
 
 # History
 ---
