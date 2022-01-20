@@ -20,7 +20,7 @@ First release of the debug tool containting rerun win32 apps.
 > [!NOTE]
 > Script reference: https://github.com/ztrhgf/useful_powershell_functions/blob/master/INTUNE/Invoke-IntuneWin32AppRedeploy.ps1
 
-[![Debug tool video more in depth](https://github.com/mmelkersen/EndpointManager/blob/96c76e343397dad9cf2b3f29c44b368f3a10b815/Intune Debug Tools/Content/hqdefault.jpg)](https://www.youtube.com/watch?v=gHG84MKE5O4)
+[![Rerun win32 apps](https://github.com/mmelkersen/EndpointManager/blob/main/Intune%20Debug%20Tools/Content/hqdefault.jpg)](https://www.youtube.com/watch?v=gHG84MKE5O4 "Rerun Win32 apps")
 
 ---
 #### Version 1.1
