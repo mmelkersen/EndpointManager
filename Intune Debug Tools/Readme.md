@@ -7,10 +7,10 @@ This article provides resources and tips for using the Intune debug tool:
 - What next? send me feedback on feedback@memtipsandtricks.tech and let me know what could be a huge help for you.
 
 Demo of Rerun win32 tool
-![alt text](https://github.com/mmelkersen/EndpointManager/blob/main/Intune%20Debug%20Tools/Rerun%20Win32%20apps.gif)
+![alt text](https://github.com/mmelkersen/EndpointManager/blob/main/Intune%20Debug%20Tools/Content/Rerun%20Win32%20apps.gif)
 
 Demo of registry changes
-![alt text](https://github.com/mmelkersen/EndpointManager/blob/main/Intune%20Debug%20Tools/Find%20registry%20changes.gif)
+![alt text](https://github.com/mmelkersen/EndpointManager/blob/main/Intune%20Debug%20Tools/Content/Find%20registry%20changes.gif)
 
 # History
 
