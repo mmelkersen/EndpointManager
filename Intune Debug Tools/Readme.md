@@ -42,4 +42,4 @@ Added 5 shortcuts to view registry changes from the last 36 hours. (could be don
 ---
 
 #### Version 1.2
-Whats next?
+- Added -executionpolicy bypass on all shortcuts
