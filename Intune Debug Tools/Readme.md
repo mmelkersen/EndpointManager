@@ -15,11 +15,6 @@ VLOG on how to rerun win32 apps here and now:
 
 [![Rerun win32 apps](https://github.com/mmelkersen/EndpointManager/blob/main/Intune%20Debug%20Tools/Content/hqdefault.jpg)](https://www.youtube.com/watch?v=gHG84MKE5O4 "Rerun Win32 apps")
 
-Demo of Rerun win32 tool
-![alt text](https://github.com/mmelkersen/EndpointManager/blob/main/Intune%20Debug%20Tools/Content/Rerun%20Win32%20apps.gif)
-
-Demo of registry changes
-![alt text](https://github.com/mmelkersen/EndpointManager/blob/main/Intune%20Debug%20Tools/Content/Find%20registry%20changes.gif)
 
 # History
 
