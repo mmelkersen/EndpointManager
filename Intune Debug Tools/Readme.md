@@ -7,6 +7,8 @@ This article provides resources and tips for using the Intune debug tool:
 - Debug policy sync live with SyncMLViewer
 - What next? send me feedback on feedback@memtipsandtricks.tech and let me know what could be a huge help for you.
 
+Download the MSI [Here](https://github.com/mmelkersen/EndpointManager/raw/main/Intune%20Debug%20Tools/IntuneDebugToolsv1.3.msi "Microsoft Intune debug toolkit") and install on machines of your choice 
+
 VLOG on how to rerun win32 apps here and now:
 [![Rerun win32 apps](https://github.com/mmelkersen/EndpointManager/blob/main/Intune%20Debug%20Tools/Content/hqdefault.jpg)](https://www.youtube.com/watch?v=gHG84MKE5O4 "Rerun Win32 apps")
 
