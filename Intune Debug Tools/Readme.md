@@ -5,9 +5,10 @@ This article provides resources and tips for using the Intune debug tool:
 - Rerun win32 tool
 - View registry changes Microsoft Intune related last 36 hours
 - Debug policy sync live with SyncMLViewer
+- Intune Device Details GUI
 - What next? send me feedback on feedback@memtipsandtricks.tech and let me know what could be a huge help for you.
 
-Download the MSI [Here](https://github.com/mmelkersen/EndpointManager/raw/main/Intune%20Debug%20Tools/IntuneDebugToolsv1.3.msi "Microsoft Intune debug toolkit") and install on machines of your choice 
+Download the MSI [Here](https://github.com/mmelkersen/EndpointManager/raw/main/Intune%20Debug%20Tools/IntuneDebugToolsv1.4.msi "Microsoft Intune debug toolkit") and install on machines of your choice 
 
 ***
 
@@ -17,6 +18,16 @@ VLOG on how to rerun win32 apps here and now:
 
 
 # History
+
+### Version 1.4
+- Added Petri Paavola's Intune Device Detail tool to the kit. Thanks for allowing me to add this tool, [Petri](https://twitter.com/petripaavola "Petri Paavola")
+
+This tool visualizes Intune device and user details and Applications and Configurations Deployment
+This tools offers Resultant Set Of Policy -type view for Intune
+
+Get more information about the tool [Here](https://github.com/petripaavola/IntuneDeviceDetailsGUI "Petri Paavola")
+
+---
 
 ### Version 1.3
 - Added icons on all shortcuts
