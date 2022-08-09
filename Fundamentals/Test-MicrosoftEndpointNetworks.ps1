@@ -3,12 +3,12 @@
  
  Created on:    06.09.2021
  Created by:    Mattias Melkersen
- Version:       1.0  
+ Version:       1.1  
  Mail:          mm@mindcore.dk
  twitter:       @mmelkersen
  Function:      Test URLs are open for Microsoft Autopilot and Intune
  
- All ports for this script can be found here: https://docs.microsoft.com/en-us/mem/intune/fundamentals/intune-endpoints last updated 03/30/2021
+ All ports for this script can be found here: https://docs.microsoft.com/en-us/mem/intune/fundamentals/intune-endpoints last updated 06/30/2021
 
  Borrowed script parts from David Segura AutopilotOOBE
  Big thanks to my colleague Sune Thomsen for doing review and final touch
@@ -16,11 +16,17 @@
  Compatible with Windows 10 and later
 ======================================================================================================
 
+Version 1.1 Added
+    #=======================================================================
+    #   Microsoft Store for business
+    #=======================================================================
+    Test-MicrosoftEndpointNetworks -ComputerNames "login.live.com","login.windows.net","account.live.com","clientconfig.passport.net","windowsphone.com","wns.windows.com","microsoft.com" -Ports "443" -TestArea "Microsoft Store and store for business"
+
 #>
 
 # versioning script
 $Title = 'Test-MicrosoftEndpointNetworks'
-$ScriptVersion = '1.0'
+$ScriptVersion = '1.1'
 
 function Test-MicrosoftEndpointNetworks {
     [CmdletBinding()]
@@ -151,6 +157,12 @@ function Test-MicrosoftEndpointNetworks {
     #   https://support.microsoft.com/en-us/topic/windows-activation-or-validation-fails-with-error-code-0x8004fe33-a9afe65e-230b-c1ed-3414-39acd7fddf52
     #=======================================================================
     Test-MicrosoftEndpointNetworks -ComputerNames "validation-v2.sls.microsoft.com","validation.sls.microsoft.com","purchase.mp.microsoft.com","purchase.md.mp.microsoft.com","login.live.com","licensing.md.mp.microsoft.com","licensing.mp.microsoft.com","go.microsoft.com","displaycatalog.md.mp.microsoft.com","displaycatalog.mp.microsoft.com","activation-v2.sls.microsoft.com","activation.sls.microsoft.com" -Ports "443" -TestArea "Windows Activation" -Urls "http://crl.microsoft.com/pki/crl/products/MicProSecSerCA_2007-12-04.crl"
+
+    #=======================================================================
+    #   Microsoft Store for business
+    #=======================================================================
+    Test-MicrosoftEndpointNetworks -ComputerNames "login.live.com","login.windows.net","account.live.com","clientconfig.passport.net","windowsphone.com","wns.windows.com","microsoft.com" -Ports "443" -TestArea "Microsoft Store and store for business"
+
 
     #=======================================================================
     #   Exit Script
