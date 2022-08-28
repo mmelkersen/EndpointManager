@@ -3,7 +3,7 @@
  
  Created on:    06.09.2021
  Created by:    Mattias Melkersen
- Version:       1.0  
+ Version:       1.1  
  Mail:          mm@mindcore.dk
  twitter:       @mmelkersen
  Function:      Test URLs are open for Microsoft Autopilot and Intune
@@ -16,11 +16,15 @@
  Compatible with Windows 10 and later
 ======================================================================================================
 
+v1.1 UPDATED
+Added time.windows.com thanks for reaching out https://github.com/BurgerhoutJ
+
+
 #>
 
 # versioning script
 $Title = 'Test-MicrosoftEndpointNetworks'
-$ScriptVersion = '1.0'
+$ScriptVersion = '1.1'
 
 function Test-MicrosoftEndpointNetworks {
     [CmdletBinding()]
@@ -113,6 +117,12 @@ function Test-MicrosoftEndpointNetworks {
     #   https://docs.microsoft.com/en-US/windows/deployment/update/windows-update-troubleshooting
     #=======================================================================
     Test-MicrosoftEndpointNetworks -ComputerNames "emdl.ws.microsoft.com","dl.delivery.mp.microsoft.com" -Ports "80" -TestArea "Windows Update"
+
+    #=======================================================================
+    #   Windows Time
+    #   https://docs.microsoft.com/en-us/mem/autopilot/networking-requirements#network-time-protocol-ntp-sync
+    #=======================================================================
+    Test-MicrosoftEndpointNetworks -ComputerNames "time.windows.com" -Ports "80" -TestArea "Windows Time"
 
     #=======================================================================
     #   Windows Autopilot Deployment Service
