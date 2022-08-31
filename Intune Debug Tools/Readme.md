@@ -10,7 +10,9 @@ This article provides resources and tips for using the Intune debug tool:
 
 - What next? send me feedback on feedback@memtipsandtricks.tech and let me know what could be a huge help for you.
 
-Download the MSI [Here](https://github.com/mmelkersen/EndpointManager/raw/main/Intune%20Debug%20Tools/IntuneDebugToolsv1.5.msi "Microsoft Intune debug toolkit") and install on machines of your choice 
+Download the MSI [Here](https://github.com/mmelkersen/EndpointManager/raw/main/Intune%20Debug%20Tools/IntuneDebugToolsv1.5.msi "Microsoft Intune debug toolkit") and install on machines of your choice.
+
+Jason Bergner has made a very cool post how you can add the tool to PowerShell App Deployment Toolkit [Here](https://silentinstallhq.com/intune-debug-tools-silent-install-how-to-guide/ "Deployment Guide")
 
 ***
 
