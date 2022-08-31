@@ -6,9 +6,11 @@ This article provides resources and tips for using the Intune debug tool:
 - View registry changes Microsoft Intune related last 36 hours
 - Debug policy sync live with SyncMLViewer
 - Intune Device Details GUI
+- Show all relevant eventlogs from the device and use color coding to easier see issues
+
 - What next? send me feedback on feedback@memtipsandtricks.tech and let me know what could be a huge help for you.
 
-Download the MSI [Here](https://github.com/mmelkersen/EndpointManager/raw/main/Intune%20Debug%20Tools/IntuneDebugToolsv1.4.msi "Microsoft Intune debug toolkit") and install on machines of your choice 
+Download the MSI [Here](https://github.com/mmelkersen/EndpointManager/raw/main/Intune%20Debug%20Tools/IntuneDebugToolsv1.5.msi "Microsoft Intune debug toolkit") and install on machines of your choice 
 
 ***
 
@@ -18,6 +20,26 @@ VLOG on how to rerun win32 apps here and now:
 
 
 # History
+
+### Version 1.5
+- Added new functionality to get and continue read the relevant eventlog messages you need in order to debug settings comming down to your client.
+
+This tool will reveal any issues written to the eventlog. Events followed:
+- Microsoft-Windows-DeviceManagement-Enterprise-Diagnostics-Provider/Admin
+- Microsoft-Windows-DeviceManagement-Enterprise-Diagnostics-Provider/Operational
+- Microsoft-Windows-ModernDeployment-Diagnostics-Provider/Autopilot
+- Microsoft-Windows-ModernDeployment-Diagnostics-Provider/ManagementService
+- Microsoft-Windows-Provisioning-Diagnostics-Provider/Admin
+- Microsoft-Windows-Shell-Core/Operational
+- Microsoft-Windows-Time-Service/Operational
+- Microsoft-Windows-User Device Registration/Admin
+
+A big thanks to [David Segura](https://twitter.com/SeguraOSD "David Segura") OSDCloud where this code is from.
+
+Demo of eventlog tracker
+![alt text](https://github.com/mmelkersen/EndpointManager/blob/main/Intune%20Debug%20Tools/Content/IntuneDebug1.5.gif)
+
+---
 
 ### Version 1.4
 - Added Petri Paavola's Intune Device Detail tool to the kit. Thanks for allowing me to add this tool, [Petri](https://twitter.com/petripaavola "Petri Paavola")
