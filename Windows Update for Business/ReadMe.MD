@@ -5,4 +5,4 @@ The debug process can be somewhat long for update rings, Feature updates and Exp
 
 With this script you can easily debug your configuration.
 
-![alt text](https://github.com/mmelkersen/EndpointManager/tree/main/Windows%20Update%20for%20Business/Content/WUfBOutput.png)
+![alt text](https://github.com/mmelkersen/EndpointManager/blob/main/Windows%20Update%20for%20Business/Content/WUfBOutput.png)
