@@ -3,7 +3,7 @@
 
 # Created on:   13.09.2022
 # Created by:   Mattias Melkersen
-# Version:	    0.1 
+# Version:	    0.2 
 # Mail:         mm@mindcore.dk
 # Twitter:      MMelkersen
 # Function:     Sample script to determine that a device does the right thing against Windows Update for Business
@@ -19,9 +19,16 @@ Special thanks to Trevor, Jannik and David for great scripting and inspiration.
 ======================================================================================================
 
 *HISTORY*
+Thanks to all testers during the development of this - @ncbrady, @jannik_reinhard, @manelrodero, @chriscorriveau, @brianfgonzalez
+
 Version 0.1 - Created first draft
-    
+Version 0.2 - Fixed SKU, Removed the need for local administrative permission by changing a function, added Windows Version, added better text for WindowsUpdate.log, Removed 1014 event
+
 #>
+
+$Title = 'Invoke-WindowsUpdateForBusinessReadiness'
+$ScriptVersion = '0.2'
+
 $WindowsUpdateLog = "C:\Temp\Windowsupdate.log"
 Get-WindowsUpdateLog -LogPath $WindowsUpdateLog -Verbose
 
@@ -201,7 +208,7 @@ $InfoBlue = @()
 $InfoDarkBlue = @()
 
 
-    $IncludeEventSource = @(19,43,44,1014)
+    $IncludeEventSource = @(19,43,44)
 
 
 # Remove Line Wrap
@@ -273,7 +280,7 @@ If ($Result -ne $null)
     }
 else
     {
-        Write-Host "  No Feature Update data found in WindowsUpdate.log" -ForegroundColor red
+        Write-Host "  No Feature Update data found in WindowsUpdate.log. This message appears if there were no recent Feature update installed." -ForegroundColor red
     }    
 
     foreach ($Item in $WindowsUpdateLogResults) {
@@ -326,7 +333,10 @@ $UpdateEngine = (New-Object -ComObject "Microsoft.Update.ServiceManager").servic
 $DeviceName = (Get-CIMInstance -ClassName Win32_OperatingSystem -NameSpace root\cimv2).CSName
 
 #Get OS Information
-$WindowsEditionSKU = Get-WindowsEdition -Online
+$WindowsEditionSKU = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+
+#Get Windows name plus edition
+$WindowsEdition = Get-CurrentPatchInfo
 
 #get Update Ring information
 $FeatureUpdateDefferal = Get-ItemPropertyValue -path "HKLM:\SOFTWARE\Microsoft\PolicyManager\current\device\Update\" -name "DeferFeatureUpdatesPeriodInDays" -ErrorAction SilentlyContinue
@@ -386,14 +396,17 @@ Write-Host -ForegroundColor Yellow "* Windows Update General Information *"
 Write-Host -NoNewline "  DeviceName: "
 Write-Host -ForegroundColor Green $DeviceName
 
-Write-Host -NoNewline "  Supported SKU: "
-if($WindowsEditionSKU.Edition -eq "Enterprise" -or $WindowsEditionSKU.Edition -eq "Pro" -or $WindowsEditionSKU.Edition -eq "Education" -or $WindowsEditionSKU.Edition -eq "Pro Education") 
+Write-host -NoNewline "  OS: "
+Write-Host -ForegroundColor Green $WindowsEdition.OSEdition
+
+Write-Host -NoNewline "  OS Supported SKU: "
+if($WindowsEditionSKU.EditionID -eq "Enterprise" -or $WindowsEditionSKU.EditionID -eq "Pro" -or $WindowsEditionSKU.EditionID -eq "Professional" -or $WindowsEditionSKU.EditionID -eq "Education" -or $WindowsEditionSKU.EditionID -eq "Pro Education" -or $WindowsEditionSKU.EditionID -eq "Professional Education") 
 {
-    Write-Host -ForegroundColor Green "$($WindowsEditionSKU.Edition) (OK)"
+    Write-Host -ForegroundColor Green "$($WindowsEditionSKU.EditionID) (OK)"
 }
 Else
 {
-    Write-Host -ForegroundColor red "Current version of Windows is not suppported ($($WindowsEditionSKU.Edition))"
+    Write-Host -ForegroundColor red "Current version of Windows is not suppported ($($WindowsEditionSKU.EditionID))"
 }
 
 Write-Host -NoNewline "  OS patch Level: "
@@ -422,14 +435,14 @@ if($SignAssistentService.StartType -ne "Disabled")
         Write-Host -ForegroundColor red "Microsoft Sign-in Assistant service is disabled and is required to be able to run!"
     }
 
-Write-Host -NoNewline "  Windows Update Feature Defferal Value: "
+Write-Host -NoNewline "  Windows Update Feature Deferal Value: "
 if($FeatureUpdateDefferal -eq "0") 
     {
         Write-Host -ForegroundColor Green "$($FeatureUpdateDefferal) (OK)"
     }
     Else
     {
-        Write-Host -ForegroundColor red "Feature Update defferal not set to recommend value (If you are only using Update ring, this is actually fine)"
+        Write-Host -ForegroundColor yellow "Feature Update deferal not set to recommend value (If you are only using Update ring, this is actually fine)"
     }
 
 Write-Host -NoNewline "  Windows Update SafeGuard Hold: "
@@ -459,7 +472,7 @@ Write-Host -NoNewline "  Health Monitoring value: "
     }
     Else
     {
-        Write-Host -ForegroundColor red "To gather data for reporting you need to enable the policy Windows Health Monitoring: WindowsUpdates"
+        Write-Host -ForegroundColor red "To gather data for reporting you need to enable the policy Windows Health Monitoring: $($WindowsHealthMonitor)"
     }      
 
 
@@ -470,7 +483,7 @@ Write-Host -NoNewline "  Telemetry data: "
     }
     Else
     {
-        Write-Host -ForegroundColor red "Telemetry level not satisfied: $($MicrosoftTelemetryLevel)"
+        Write-Host -ForegroundColor red "Telemetry level not satisfied (expected Required or Full): $($MicrosoftTelemetryLevel)"
     }  
 
 Write-Host -NoNewline "  Feature Update: "
@@ -480,7 +493,7 @@ If ($FeatureName -ne $null)
     }
 else
     {
-        Write-Host "No data found" -ForegroundColor red
+        Write-Host "Feature Update not applied recently - No data found" -ForegroundColor red
     }
 
 Write-Host -NoNewline "  Feature Update State: "
@@ -490,7 +503,7 @@ If ($FeatureName -ne $null)
     }
 else
     {
-        Write-Host "No data found" -ForegroundColor red
+        Write-Host "Feature Update not applied recently - No data found" -ForegroundColor red
     }
 
 Write-Host -NoNewline "  Feature Update Downloaded: "
@@ -500,7 +513,7 @@ If ($FeatureUpdateDownloadPath -ne $null)
     }
 else
     {
-        Write-Host "No data found" -ForegroundColor red
+        Write-Host "Feature Update not applied recently - No data found" -ForegroundColor red
     }
 
 Write-Host " "
@@ -520,5 +533,10 @@ foreach ($Item in $Results) {
     }
  }
 
-Write-Host "Press any key to continue..."
-$Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+ if (!($host.name -match "ISE")) {
+    Write-Host ""
+    Write-Host "Script Finalized"
+    Write-Host "Script version: $ScriptVersion"
+    
+    $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+}
