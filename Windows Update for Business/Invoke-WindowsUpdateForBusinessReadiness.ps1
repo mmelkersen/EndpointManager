@@ -30,6 +30,14 @@ Version 0.3 - Issues getting data from Microsoft Website mitigated, Telemetry ga
 $Title = 'Invoke-WindowsUpdateForBusinessReadiness'
 $ScriptVersion = '0.3'
 
+$tempPath = Test-Path -Path "C:\Temp"
+If ($tempPath -eq $false)
+    {
+        Write-Host "C:\temp does not appear on your device. Please create it"
+        $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    }
+
+
 $WindowsUpdateLog = "C:\Temp\Windowsupdate.log"
 Get-WindowsUpdateLog -LogPath $WindowsUpdateLog -Verbose
 
@@ -46,7 +54,8 @@ Function Get-CurrentPatchInfo
         [switch]$ExcludeOutofBand
     )
     $ProgressPreference = 'SilentlyContinue'
-    $URI = "https://aka.ms/WindowsUpdateHistory" # Windows 10 release history
+    $URIWin10 = "https://aka.ms/WindowsUpdateHistory" # Windows 10 release history
+    $URIWin11 = "https://aka.ms/Windows11UpdateHistory" # Windows 11 release history
 
     Function Get-MyWindowsVersion {
             [CmdletBinding()]
@@ -92,19 +101,34 @@ Function Get-CurrentPatchInfo
         Return $ArrayList
     }
 
+    $CurrentWindowsVersion = Get-MyWindowsVersion –ErrorAction Stop
     If ($PSVersionTable.PSVersion.Major -ge 6)
     {
-        $Response = Invoke-WebRequest –Uri $URI –ErrorAction Stop
+        if ($CurrentWindowsVersion.'OS Build' -le "21000.0000")
+            {
+                $Response = Invoke-WebRequest –Uri $URIWIN10 –ErrorAction Stop
+            }
+        else
+            {
+                $Response = Invoke-WebRequest –Uri $URIWIN11 –ErrorAction Stop
+            }
     }
     else 
     {
-        $Response = Invoke-WebRequest –Uri $URI –UseBasicParsing –ErrorAction Stop
+            if ($CurrentWindowsVersion.'OS Build' -le "21000.0000")
+            {
+                $Response = Invoke-WebRequest –Uri $URIWIN10 –UseBasicParsing –ErrorAction Stop
+            }
+        else
+            {
+                $Response = Invoke-WebRequest –Uri $URIWIN11 –UseBasicParsing –ErrorAction Stop
+            }
     }
 
     If (!($Response.Links))
     { throw "Response was not parsed as HTML"}
     $VersionDataRaw = $Response.Links | where {$_.outerHTML -match "supLeftNavLink" -and $_.outerHTML -match "KB"}
-    $CurrentWindowsVersion = Get-MyWindowsVersion –ErrorAction Stop
+    
 
     If ($ListAllAvailable)
     {
@@ -335,6 +359,8 @@ foreach ($Item in $Results) {
     }
 }
 
+
+#Looking inside the Windows Update log file
 Write-host ""
 Write-host ""
 Write-Host -ForegroundColor Yellow "* Windows Update LOGS *"
@@ -372,6 +398,10 @@ else
             Write-Host "$($Item)" -ForegroundColor DarkGray
         }
      }
+
+#Looking throught WindowsUpdates.log to find Quality patch
+$Result = Get-Content -Path $WindowsUpdateLog | Select-String -Pattern "cumulative update" | ForEach-Object {$_.Line.Substring([regex]::match($_.Line,"{").index+1,32)} 
+
 
      function Test-RegistryValue {
 
@@ -427,7 +457,7 @@ $DeviceName = (Get-CIMInstance -ClassName Win32_OperatingSystem -NameSpace root\
 $WindowsEditionSKU = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
 
 #Get Windows name plus edition
-$WindowsEdition = Get-MyWindowsVersion
+$WindowsEdition = Get-ComputerInfo
 
 #get Update Ring information
 $FeatureUpdateDefferal = Get-ItemPropertyValue -path "HKLM:\SOFTWARE\Microsoft\PolicyManager\current\device\Update\" -name "DeferFeatureUpdatesPeriodInDays" -ErrorAction SilentlyContinue
@@ -498,7 +528,7 @@ Write-Host -NoNewline "  DeviceName: "
 Write-Host -ForegroundColor Green $DeviceName
 
 Write-host -NoNewline "  OS: "
-Write-Host -ForegroundColor Green $WindowsEdition.'Windows Edition'
+Write-Host -ForegroundColor Green $WindowsEdition.OsName
 
 Write-Host -NoNewline "  OS Supported SKU: "
 if($WindowsEditionSKU.EditionID -eq "Enterprise" -or $WindowsEditionSKU.EditionID -eq "Pro" -or $WindowsEditionSKU.EditionID -eq "Professional" -or $WindowsEditionSKU.EditionID -eq "Education" -or $WindowsEditionSKU.EditionID -eq "Pro Education" -or $WindowsEditionSKU.EditionID -eq "Professional Education") 
@@ -511,13 +541,27 @@ Else
 }
 
 Write-Host -NoNewline "  OS patch Level: "
-Write-Host -ForegroundColor Green $WindowsEdition.'OS Build'
+Write-Host -ForegroundColor Green $CurrentPatchLevel.OSBuild
 
 Write-Host -NoNewline "  Current Installed Update: "
-Write-Host -ForegroundColor Green $CurrentPatchLevel.CurrentInstalledUpdate
+if($CurrentPatchLevel.CurrentInstalledUpdate -ne "Info could not be found") 
+    {
+        Write-Host -ForegroundColor Green $CurrentPatchLevel.CurrentInstalledUpdate
+    }
+else
+    {
+        Write-Host -ForegroundColor Red $CurrentPatchLevel.CurrentInstalledUpdate
+    }
 
 Write-Host -NoNewline "  Lastest available Update: "
-Write-Host -ForegroundColor Green $CurrentPatchLevel.LatestAvailableUpdate
+if($CurrentPatchLevel.LatestAvailableUpdate -ne "Info could not be found") 
+    {
+        Write-Host -ForegroundColor Green $CurrentPatchLevel.LatestAvailableUpdate
+    }
+else
+    {
+        Write-Host -ForegroundColor Red $CurrentPatchLevel.LatestAvailableUpdate
+    }
 
 Write-Host -NoNewline "  Windows Update Source: "
 if($UpdateEngine -eq "Microsoft Update") {
