@@ -162,8 +162,8 @@ Function Get-CurrentPatchInfo
         }
     Catch
         {
-            Write-Host "Could not get info about CurrentPatch and LatestPatch from Microsoft Website"
-            $CurrentPatchModified = "Info could not found"
+            #Write-Host "Could not get info about CurrentPatch and LatestPatch from Microsoft Website"
+            $CurrentPatchModified = "Info could not be found"
         }
 
     Try 
@@ -172,8 +172,8 @@ Function Get-CurrentPatchInfo
         }
     Catch
         {
-            Write-Host "Could not get info about CurrentPatch and LatestPatch from Microsoft Website"
-            $KBModified = "Info could not found"
+            #Write-Host "Could not get info about CurrentPatch and LatestPatch from Microsoft Website"
+            $KBModified = "Info could not be found"
         }
  
      Try 
@@ -182,8 +182,8 @@ Function Get-CurrentPatchInfo
         }
     Catch
         {
-            Write-Host "Could not get info about CurrentPatch and LatestPatch from Microsoft Website"
-            $LastPatchModified = "Info could not found"
+            #Write-Host "Could not get info about CurrentPatch and LatestPatch from Microsoft Website"
+            $LastPatchModified = "Info could not be found"
         }   
 
     Try 
@@ -192,8 +192,8 @@ Function Get-CurrentPatchInfo
         }
     Catch
         {
-            Write-Host "Could not get info about CurrentPatch and LatestPatch from Microsoft Website"
-            $KBLatestModified = "Info could not found"
+            #Write-Host "Could not get info about CurrentPatch and LatestPatch from Microsoft Website"
+            $KBLatestModified = "Info could not be found"
         }
 
     $Table = New-Object System.Data.DataTable
