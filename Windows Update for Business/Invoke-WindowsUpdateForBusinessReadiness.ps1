@@ -712,7 +712,7 @@ foreach ($Item in $Results)
     if ($Item.Message -like "*Cumulative Update*") 
         {
             Write-Host -NoNewline "  Quality Updates INFO: "
-            Write-Host "$($Item.Message)" -ForegroundColor Green
+            Write-Host "$($Item.TimeCreated) - $($Item.Message)" -ForegroundColor Green
             $QAFound = 1
         }
 }
