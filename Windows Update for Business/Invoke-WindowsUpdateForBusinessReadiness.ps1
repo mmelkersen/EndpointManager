@@ -3,7 +3,7 @@
 
 # Created on:   13.09.2022
 # Created by:   Mattias Melkersen
-# Version:	    0.3 
+# Version:	    0.4 
 # Mail:         mm@mindcore.dk
 # Twitter:      MMelkersen
 # Function:     Sample script to determine that a device does the right thing against Windows Update for Business
@@ -24,11 +24,12 @@ Thanks to all testers during the development of this - @ncbrady, @jannik_reinhar
 Version 0.1 - Created first draft
 Version 0.2 - Fixed SKU, Removed the need for local administrative permission by changing a function, added Windows Version, added better text for WindowsUpdate.log, Removed 1014 event
 Version 0.3 - Issues getting data from Microsoft Website mitigated, Telemetry gathered from 2 places.
+Version 0.4 - Correcting Windows 10/Windows 11 gather info which was incorrect, Added Quality Update to the log, Added extended quality log from Windows Update log, added check for C:\Temp
 
 #>
 
 $Title = 'Invoke-WindowsUpdateForBusinessReadiness'
-$ScriptVersion = '0.3'
+$ScriptVersion = '0.4'
 
 $tempPath = Test-Path -Path "C:\Temp"
 If ($tempPath -eq $false)
@@ -342,6 +343,9 @@ foreach ($Item in $Results) {
         Write-Host "$($Item.TimeCreated) INFO :$($Item.Id)`t$($Item.Message)" -ForegroundColor Green
         $FeatureName = $Item.Message
     }
+    elseif ($Item.Message -like "*Cumulative Update*") {
+        Write-Host "$($Item.TimeCreated) INFO :$($Item.Id)`t$($Item.Message)" -ForegroundColor Green
+    }
     elseif ($Item.id -eq "43") {
         Write-Host "$($Item.TimeCreated) INFO :$($Item.Id)`t$($Item.Message)" -ForegroundColor White
     }
@@ -359,11 +363,10 @@ foreach ($Item in $Results) {
     }
 }
 
-
 #Looking inside the Windows Update log file
 Write-host ""
 Write-host ""
-Write-Host -ForegroundColor Yellow "* Windows Update LOGS *"
+Write-Host -ForegroundColor Yellow "* Windows Update - FEATURE UPDATE LOGS *"
 
 $Result = Get-Content -Path $WindowsUpdateLog | Select-String -Pattern "Feature update to Windows" | ForEach-Object {$_.Line.Substring([regex]::match($_.Line,"{").index+1,32)} 
 
@@ -399,8 +402,44 @@ else
         }
      }
 
+Write-host ""
+Write-host ""
+Write-Host -ForegroundColor Yellow "* Windows Update - CUMULATIVE UPDATE LOGS *"
+
 #Looking throught WindowsUpdates.log to find Quality patch
 $Result = Get-Content -Path $WindowsUpdateLog | Select-String -Pattern "cumulative update" | ForEach-Object {$_.Line.Substring([regex]::match($_.Line,"{").index+1,32)} 
+
+If ($Result -ne $null)
+    { 
+        $WindowsUpdateLogResults = Get-Content -Path $WindowsUpdateLog | Select-String -Pattern $Result.Item($Result.Count -1) -ErrorAction SilentlyContinue
+    }
+else
+    {
+        Write-Host "  No Feature Update data found in WindowsUpdate.log. This message appears if there were no recent Feature update installed." -ForegroundColor red
+    }    
+
+    foreach ($Item in $WindowsUpdateLogResults) {
+
+        if ($Item -like '*Downloading from*') {
+            Write-Host "$($Item)" -ForegroundColor Green
+            [String]$FeatureUpdateDownloadPath = $Item 
+        }
+        elseif ($Item -like '*DownloadManager*') {
+            Write-Host "$($Item)" -ForegroundColor White
+        }
+        elseif ($Item -like '*ComApi*') {
+            Write-Host "$($Item)" -ForegroundColor Yellow
+        }
+        elseif ($Item -like '*UDP*') {
+            Write-Host "$($Item)" -ForegroundColor DarkCyan
+        }
+        elseif ($Item -like '*Requires Reboot:*') {
+            Write-Host "$($Item)" -ForegroundColor Cyan
+        }
+        else {
+            Write-Host "$($Item)" -ForegroundColor DarkGray
+        }
+     }
 
 
      function Test-RegistryValue {
@@ -631,6 +670,9 @@ Write-Host -NoNewline "  Telemetry data: "
         Write-Host -ForegroundColor red "Telemetry level not satisfied (expected Required or Full): $($MicrosoftTelemetryLevel)"
     }  
 
+Write-Host ""
+Write-Host -ForegroundColor Yellow "* WINDOWS FEATURE UPDATE *"
+
 Write-Host -NoNewline "  Feature Update: "
 If ($FeatureName -ne $null)
     { 
@@ -660,6 +702,25 @@ else
     {
         Write-Host "Feature Update not applied recently - No data found" -ForegroundColor red
     }
+
+Write-Host ""
+Write-Host -ForegroundColor Yellow "* WINDOWS QUALITY UPDATE *"
+
+$QAFound = 0
+foreach ($Item in $Results) 
+{
+    if ($Item.Message -like "*Cumulative Update*") 
+        {
+            Write-Host -NoNewline "  Quality Updates INFO: "
+            Write-Host "$($Item.Message)" -ForegroundColor Green
+            $QAFound = 1
+        }
+}
+
+If ($QAFound -eq 0)
+{ 
+    Write-Host "  Quality Update not applied recently - No data found" -ForegroundColor red
+}
 
 Write-Host " "
 Write-Host -NoNewline "* ENDPOINT CONNECTIONS *`n" -ForegroundColor Yellow
