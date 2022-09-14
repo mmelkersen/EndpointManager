@@ -3,7 +3,7 @@
 
 # Created on:   13.09.2022
 # Created by:   Mattias Melkersen
-# Version:	    0.2 
+# Version:	    0.3 
 # Mail:         mm@mindcore.dk
 # Twitter:      MMelkersen
 # Function:     Sample script to determine that a device does the right thing against Windows Update for Business
@@ -19,15 +19,16 @@ Special thanks to Trevor, Jannik and David for great scripting and inspiration.
 ======================================================================================================
 
 *HISTORY*
-Thanks to all testers during the development of this - @ncbrady, @jannik_reinhard, @manelrodero, @chriscorriveau, @brianfgonzalez
+Thanks to all testers during the development of this - @ncbrady, @jannik_reinhard, @manelrodero, @chriscorriveau, @brianfgonzalez, Jan Vilhelmsen, @ArnieTomasovsky
 
 Version 0.1 - Created first draft
 Version 0.2 - Fixed SKU, Removed the need for local administrative permission by changing a function, added Windows Version, added better text for WindowsUpdate.log, Removed 1014 event
+Version 0.3 - Issues getting data from Microsoft Website mitigated, Telemetry gathered from 2 places.
 
 #>
 
 $Title = 'Invoke-WindowsUpdateForBusinessReadiness'
-$ScriptVersion = '0.2'
+$ScriptVersion = '0.3'
 
 $WindowsUpdateLog = "C:\Temp\Windowsupdate.log"
 Get-WindowsUpdateLog -LogPath $WindowsUpdateLog -Verbose
@@ -155,6 +156,45 @@ Function Get-CurrentPatchInfo
         $LatestAvailablePatch = $VersionDataRaw | where {$_.outerHTML -match $CurrentWindowsVersion.'OS Build'.Split('.')[0]} | Select –First 1
     }
 
+    Try 
+        {
+            $CurrentPatchModified = $CurrentPatch.outerHTML.Split('>')[1].Replace('</a','').Replace('&#x2014;',' – ')
+        }
+    Catch
+        {
+            Write-Host "Could not get info about CurrentPatch and LatestPatch from Microsoft Website"
+            $CurrentPatchModified = "Info could not found"
+        }
+
+    Try 
+        {
+            $KBModified = "KB" + $CurrentPatch.href.Split('/')[-1]
+        }
+    Catch
+        {
+            Write-Host "Could not get info about CurrentPatch and LatestPatch from Microsoft Website"
+            $KBModified = "Info could not found"
+        }
+ 
+     Try 
+        {
+            $LastPatchModified = $LatestAvailablePatch.outerHTML.Split('>')[1].Replace('</a','').Replace('&#x2014;',' – ')
+        }
+    Catch
+        {
+            Write-Host "Could not get info about CurrentPatch and LatestPatch from Microsoft Website"
+            $LastPatchModified = "Info could not found"
+        }   
+
+    Try 
+        {
+            $KBLatestModified = "KB" + $LatestAvailablePatch.href.Split('/')[-1]
+        }
+    Catch
+        {
+            Write-Host "Could not get info about CurrentPatch and LatestPatch from Microsoft Website"
+            $KBLatestModified = "Info could not found"
+        }
 
     $Table = New-Object System.Data.DataTable
     [void]$Table.Columns.AddRange(@('OSVersion','OSEdition','OSBuild','CurrentInstalledUpdate','CurrentInstalledUpdateKB','CurrentInstalledUpdateInfoURL','LatestAvailableUpdate','LastestAvailableUpdateKB','LastestAvailableUpdateInfoURL'))
@@ -162,17 +202,44 @@ Function Get-CurrentPatchInfo
         $CurrentWindowsVersion.Version,
         $CurrentWindowsVersion.'Windows Edition',
         $CurrentWindowsVersion.'OS Build',
-        $CurrentPatch.outerHTML.Split('>')[1].Replace('</a','').Replace('&#x2014;',' – '),
-        "KB" + $CurrentPatch.href.Split('/')[-1],
+        $CurrentPatchModified,
+        $KBModified,
         "https://support.microsoft.com" + $CurrentPatch.href,
-        $LatestAvailablePatch.outerHTML.Split('>')[1].Replace('</a','').Replace('&#x2014;',' – '),
-        "KB" + $LatestAvailablePatch.href.Split('/')[-1],
+        $LastPatchModified,
+        $KBLatestModified,
         "https://support.microsoft.com" + $LatestAvailablePatch.href
         )
     Return $Table
 
 }
 
+    Function Get-MyWindowsVersion {
+            [CmdletBinding()]
+            Param
+            (
+                $ComputerName = $env:COMPUTERNAME
+            )
+
+            $Table = New-Object System.Data.DataTable
+            $Table.Columns.AddRange(@("ComputerName","Windows Edition","Version","OS Build"))
+            $ProductName = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' –Name ProductName).ProductName
+            Try
+            {
+                $Version = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' –Name ReleaseID –ErrorAction Stop).ReleaseID
+            }
+            Catch
+            {
+                $Version = "N/A"
+            }
+            $CurrentBuild = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' –Name CurrentBuild).CurrentBuild
+            $UBR = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' –Name UBR).UBR
+            $OSVersion = $CurrentBuild + "." + $UBR
+            $TempTable = New-Object System.Data.DataTable
+            $TempTable.Columns.AddRange(@("ComputerName","Windows Edition","Version","OS Build"))
+            [void]$TempTable.Rows.Add($env:COMPUTERNAME,$ProductName,$Version,$OSVersion)
+
+            Return $TempTable
+    }
 #================================================
 # Initialize
 #================================================
@@ -306,6 +373,30 @@ else
         }
      }
 
+     function Test-RegistryValue {
+
+        param (
+        
+         [parameter(Mandatory=$true)]
+         [ValidateNotNullOrEmpty()]$Path,
+        
+        [parameter(Mandatory=$true)]
+         [ValidateNotNullOrEmpty()]$Value
+        )
+        
+        try {
+        
+        Get-ItemProperty -Path $Path | Select-Object -ExpandProperty $Value -ErrorAction Stop | Out-Null
+         return $true
+         }
+        
+        catch {
+        
+        return $false
+        
+        }
+        
+        }     
 function Get-ConnectionTest {
     @("dl.delivery.mp.microsoft.com", "update.microsoft.com", "tsfe.trafficshaping.dsp.mp.microsoft.com", "devicelistenerprod.microsoft.com", "login.windows.net") | ForEach-Object {
         $result = (Test-NetConnection -Port 443 -ComputerName $_)    
@@ -336,7 +427,7 @@ $DeviceName = (Get-CIMInstance -ClassName Win32_OperatingSystem -NameSpace root\
 $WindowsEditionSKU = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
 
 #Get Windows name plus edition
-$WindowsEdition = Get-CurrentPatchInfo
+$WindowsEdition = Get-MyWindowsVersion
 
 #get Update Ring information
 $FeatureUpdateDefferal = Get-ItemPropertyValue -path "HKLM:\SOFTWARE\Microsoft\PolicyManager\current\device\Update\" -name "DeferFeatureUpdatesPeriodInDays" -ErrorAction SilentlyContinue
@@ -376,7 +467,17 @@ $results | sort DisplayName | where {$_.DisplayName -match $SearchFor}
 $MicrosoftUpdateHealthTools = Search-RegistryUninstallkey -SearchFor "Microsoft Update Health Tools"       
 
 #Gathering Telemetry data
-$MicrosoftTelemetryLevel = Get-ItemPropertyValue -path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection\" -name "AllowTelemetry_PolicyManager" -ErrorAction SilentlyContinue
+$Telemetry = Test-RegistryValue -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection' -Value 'AllowTelemetry'
+If ($Telemetry -eq $True)
+    {
+        $MicrosoftTelemetryLevel = Get-ItemPropertyValue -path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection\" -name "AllowTelemetry" -ErrorAction SilentlyContinue
+    }
+Else
+    {
+        $MicrosoftTelemetryLevel = Get-ItemPropertyValue -path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection\" -name "AllowTelemetry_PolicyManager" -ErrorAction SilentlyContinue
+    }
+
+if ($MicrosoftTelemetryLevel -eq (0)) {$MicrosoftTelemetryLevel = "Disabled"}
 if ($MicrosoftTelemetryLevel -eq (1)) {$MicrosoftTelemetryLevel = "Basic"}
 if ($MicrosoftTelemetryLevel -eq (2)) {$MicrosoftTelemetryLevel = "Required"}
 if ($MicrosoftTelemetryLevel -eq (3)) {$MicrosoftTelemetryLevel = "Full"}
@@ -397,7 +498,7 @@ Write-Host -NoNewline "  DeviceName: "
 Write-Host -ForegroundColor Green $DeviceName
 
 Write-host -NoNewline "  OS: "
-Write-Host -ForegroundColor Green $WindowsEdition.OSEdition
+Write-Host -ForegroundColor Green $WindowsEdition.'Windows Edition'
 
 Write-Host -NoNewline "  OS Supported SKU: "
 if($WindowsEditionSKU.EditionID -eq "Enterprise" -or $WindowsEditionSKU.EditionID -eq "Pro" -or $WindowsEditionSKU.EditionID -eq "Professional" -or $WindowsEditionSKU.EditionID -eq "Education" -or $WindowsEditionSKU.EditionID -eq "Pro Education" -or $WindowsEditionSKU.EditionID -eq "Professional Education") 
@@ -410,7 +511,7 @@ Else
 }
 
 Write-Host -NoNewline "  OS patch Level: "
-Write-Host -ForegroundColor Green $CurrentPatchLevel.OSBuild
+Write-Host -ForegroundColor Green $WindowsEdition.'OS Build'
 
 Write-Host -NoNewline "  Current Installed Update: "
 Write-Host -ForegroundColor Green $CurrentPatchLevel.CurrentInstalledUpdate
@@ -477,7 +578,7 @@ Write-Host -NoNewline "  Health Monitoring value: "
 
 
 Write-Host -NoNewline "  Telemetry data: "
-   if($MicrosoftTelemetryLevel -ne $null -and $MicrosoftTelemetryLevel -ne "Basic") 
+   if($MicrosoftTelemetryLevel -ne $null -and $MicrosoftTelemetryLevel -ne "Basic" -and $MicrosoftTelemetryLevel -ne "Disabled") 
     {
         Write-Host -ForegroundColor Green "$($MicrosoftTelemetryLevel) (OK)"
     }
