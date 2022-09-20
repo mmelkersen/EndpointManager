@@ -1,9 +1,9 @@
-<#
+﻿<#
 ======================================================================================================
 
 # Created on:   13.09.2022
 # Created by:   Mattias Melkersen
-# Version:	    0.4 
+# Version:	    0.6 
 # Mail:         mm@mindcore.dk
 # Twitter:      MMelkersen
 # Function:     Sample script to determine that a device does the right thing against Windows Update for Business
@@ -19,17 +19,19 @@ Special thanks to Trevor, Jannik and David for great scripting and inspiration.
 ======================================================================================================
 
 *HISTORY*
-Thanks to all testers during the development of this - @ncbrady, @jannik_reinhard, @manelrodero, @chriscorriveau, @brianfgonzalez, Jan Vilhelmsen, @ArnieTomasovsky
+Thanks to all testers during the development of this - @ncbrady, @jannik_reinhard, @manelrodero, @chriscorriveau, @brianfgonzalez, Jan Vilhelmsen, @ArnieTomasovsky, @maleroytw
 
 Version 0.1 - Created first draft
 Version 0.2 - Fixed SKU, Removed the need for local administrative permission by changing a function, added Windows Version, added better text for WindowsUpdate.log, Removed 1014 event
 Version 0.3 - Issues getting data from Microsoft Website mitigated, Telemetry gathered from 2 places.
 Version 0.4 - Correcting Windows 10/Windows 11 gather info which was incorrect, Added Quality Update to the log, Added extended quality log from Windows Update log, added check for C:\Temp
+Version 0.5 - Wording
+Version 0.6 - Able to fetch info from country specific eventlogs, added Office 365 patch level info.
 
 #>
 
 $Title = 'Invoke-WindowsUpdateForBusinessReadiness'
-$ScriptVersion = '0.4'
+$ScriptVersion = '0.6'
 
 $tempPath = Test-Path -Path "C:\Temp"
 If ($tempPath -eq $false)
@@ -367,8 +369,14 @@ foreach ($Item in $Results) {
 Write-host ""
 Write-host ""
 Write-Host -ForegroundColor Yellow "* Windows Update - FEATURE UPDATE LOGS *"
+$Eventlog = Get-EventLog -LogName Application -Newest 500
 
-$Result = Get-Content -Path $WindowsUpdateLog | Select-String -Pattern "Feature update to Windows" | ForEach-Object {$_.Line.Substring([regex]::match($_.Line,"{").index+1,32)} 
+if ($Eventlog.Message -like ("*Beskrivelse*")) {$PatternToSearchFU = "Akkumuleret opdatering"}
+if ($Eventlog.Message -like ("*Description*")) {$PatternToSearchFU = "Feature update to Windows"}
+if ($OSLanguage.Name -eq ("fr-FR")) {$PatternToSearchFU = ""}
+if ($OSLanguage.Name -eq ("de-DE")) {$PatternToSearchFU = ""}
+
+$Result = Get-Content -Path $WindowsUpdateLog | Select-String -Pattern $PatternToSearchFU | ForEach-Object {$_.Line.Substring([regex]::match($_.Line,"{").index+1,32)} 
 
 If ($Result -ne $null)
     { 
@@ -407,7 +415,9 @@ Write-host ""
 Write-Host -ForegroundColor Yellow "* Windows Update - CUMULATIVE UPDATE LOGS *"
 
 #Looking throught WindowsUpdates.log to find Quality patch
-$Result = Get-Content -Path $WindowsUpdateLog | Select-String -Pattern "cumulative update" | ForEach-Object {$_.Line.Substring([regex]::match($_.Line,"{").index+1,32)} 
+$PatternToSearchQA = get-date -Format yyyy-MM
+
+$Result = Get-Content -Path $WindowsUpdateLog | Select-String -Pattern $PatternToSearch | ForEach-Object {$_.Line.Substring([regex]::match($_.Line,"{").index+1,32)} 
 
 If ($Result -ne $null)
     { 
@@ -560,6 +570,19 @@ $SignAssistentService = Get-Service "wlidsvc"
 #Get info if the Windows Health policy has been enabled
 $WindowsHealthMonitor = Get-ItemPropertyValue -path "HKLM:\SOFTWARE\Microsoft\PolicyManager\current\device\DeviceHealthMonitoring\" -name "ConfigDeviceHealthMonitoringScope" -ErrorAction SilentlyContinue
 
+#Get Office365 version plus configuration
+$Office365Configuration = Get-ItemProperty -Path  "HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration" -ErrorAction SilentlyContinue
+$Office365Installation = Get-ItemProperty -Path  "HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Scenario\INSTALL" -ErrorAction SilentlyContinue
+$Office365Common = Get-ItemProperty -Path  "HKLM:\SOFTWARE\Microsoft\Office\Common" -ErrorAction SilentlyContinue
+if ($Office365Configuration.UpdateChannel -eq ("http://officecdn.microsoft.com/pr/55336b82-a18d-4dd6-b5f6-9e5095c314a6")) {$Office365ConfigurationUpdateChannel = "Monthly Enterprise Channel"}
+if ($Office365Configuration.UpdateChannel -eq ("http://officecdn.microsoft.com/pr/492350f6-3a01-4f97-b9c0-c7c6ddf67d60")) {$Office365ConfigurationUpdateChannel = "Current Channel"}
+if ($Office365Configuration.UpdateChannel -eq ("http://officecdn.microsoft.com/pr/64256afe-f5d9-4f86-8936-8840a6a4f5be")) {$Office365ConfigurationUpdateChannel = "Current Channel (Preview)"}
+if ($Office365Configuration.UpdateChannel -eq ("http://officecdn.microsoft.com/pr/7ffbc6bf-bc32-4f92-8982-f9dd17fd3114")) {$Office365ConfigurationUpdateChannel = "Semi-Annual Enterprise Channel"}
+if ($Office365Configuration.UpdateChannel -eq ("http://officecdn.microsoft.com/pr/b8f9b850-328d-4355-9145-c59439a0c4cf")) {$Office365ConfigurationUpdateChannel = "Semi-Annual Enterprise Channel (Preview)"}
+if ($Office365Configuration.UpdateChannel -eq ("http://officecdn.microsoft.com/pr/5440fd1f-7ecb-4221-8110-145efaa6372f")) {$Office365ConfigurationUpdateChannel = "Beta Channel"}
+
+
+
 Write-Host ""
 Write-Host -ForegroundColor Yellow "* Windows Update General Information *"
 
@@ -656,7 +679,7 @@ Write-Host -NoNewline "  Health Monitoring value: "
     }
     Else
     {
-        Write-Host -ForegroundColor red "To gather data for reporting you need to enable the policy Windows Health Monitoring: $($WindowsHealthMonitor)"
+        Write-Host -ForegroundColor red "We detected health monitoring but it's only enabled for 'boot performance'. You need to enable it for 'windowsupdate' to get reporting: $($WindowsHealthMonitor)"
     }      
 
 
@@ -706,10 +729,11 @@ else
 Write-Host ""
 Write-Host -ForegroundColor Yellow "* WINDOWS QUALITY UPDATE *"
 
+
 $QAFound = 0
 foreach ($Item in $Results) 
 {
-    if ($Item.Message -like "*Cumulative Update*") 
+    if ($Item.Message -like "*$($PatternToSearchQA)*") 
         {
             Write-Host -NoNewline "  Quality Updates INFO: "
             Write-Host "$($Item.TimeCreated) - $($Item.Message)" -ForegroundColor Green
@@ -722,6 +746,101 @@ If ($QAFound -eq 0)
     Write-Host "  Quality Update not applied recently - No data found" -ForegroundColor red
 }
 
+
+#OFFICE 365 MESSAGES
+Write-Host ""
+Write-Host -ForegroundColor Yellow "* OFFICE 365 *"
+
+Write-Host -NoNewline "  Microsoft 365 Apps version: "
+If ($Office365Configuration -ne $null)
+    { 
+        Write-host $Office365Configuration.VersionToReport -ForegroundColor Green
+    }
+else
+    {
+        Write-Host "Microsoft 365 apps seems to be missing - No data found" -ForegroundColor red
+    }
+
+Write-Host -NoNewline "  Microsoft 365 Apps channel: "
+If ($Office365Configuration -ne $null)
+    { 
+        Write-host $Office365ConfigurationUpdateChannel -ForegroundColor Green
+    }
+else
+    {
+        Write-Host "Microsoft 365 apps seems to be missing - No data found" -ForegroundColor red
+    }
+
+Write-Host -NoNewline "  Microsoft 365 Apps architecture: "
+If ($Office365Configuration -ne $null)
+    { 
+        Write-host $Office365Configuration.Platform -ForegroundColor Green
+    }
+else
+    {
+        Write-Host "Microsoft 365 apps seems to be missing - No data found" -ForegroundColor red
+    }
+
+Write-Host -NoNewline "  Microsoft 365 Apps OneDrive Addon: "
+If ($Office365Configuration.OneDriveClientAddon -ne $null)
+    { 
+        Write-host $Office365Configuration.OneDriveClientAddon -ForegroundColor Green
+    }
+else
+    {
+        Write-Host "Microsoft 365 apps seems to be missing - No data found" -ForegroundColor red
+    }
+
+Write-Host -NoNewline "  Microsoft 365 Apps Teams Addon: "
+If ($Office365Configuration.TeamsAddon -ne $null)
+    { 
+        Write-host $Office365Configuration.TeamsAddon -ForegroundColor Green
+    }
+else
+    {
+        Write-Host "Microsoft 365 apps seems to be missing - No data found" -ForegroundColor red
+    }
+
+Write-Host -NoNewline "  Microsoft 365 Apps update enabled: "
+If ($Office365Configuration.UpdatesEnabled -ne $null)
+    { 
+        Write-host $Office365Configuration.UpdatesEnabled -ForegroundColor Green
+    }
+else
+    {
+        Write-Host "Microsoft 365 apps seems to be missing - No data found" -ForegroundColor red
+    }
+
+Write-Host -NoNewline "  Microsoft 365 Apps install source: "
+If ($Office365Installation.SourceType -ne $null)
+    { 
+        Write-host "$($Office365Installation.SourceType)"   -ForegroundColor Green
+    }
+else
+    {
+        Write-Host "No installation source found!" -ForegroundColor Yellow
+    }
+
+Write-Host -NoNewline "  Microsoft 365 Apps install URL: "
+If ($Office365Installation.BaseUrl -ne $null)
+    { 
+        Write-host $Office365Installation.BaseUrl -ForegroundColor Green
+    }
+else
+    {
+        Write-Host "No installation source found!" -ForegroundColor Red
+    }
+
+Write-Host -NoNewline "  Microsoft 365 Apps management: "
+If ($Office365Common.OfficeManagementState -ne $null)
+    { 
+        Write-host $Office365Common.OfficeManagementState -ForegroundColor Green
+    }
+else
+    {
+        Write-Host "No Office Management State found!" -ForegroundColor Red
+    }
+    
 Write-Host " "
 Write-Host -NoNewline "* ENDPOINT CONNECTIONS *`n" -ForegroundColor Yellow
 Get-ConnectionTest
