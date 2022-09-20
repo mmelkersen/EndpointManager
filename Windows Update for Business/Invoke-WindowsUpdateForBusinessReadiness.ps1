@@ -591,7 +591,7 @@ if ($Office365Management.'(default)' -eq "C:\Program Files\Common Files\Microsof
     {
         $OfficeManaged = "Configuration Manager"
         $Office365GPO = Get-ItemProperty -Path  "HKLM:\SOFTWARE\Microsoft\Office\C2RSvcMgr" -ErrorAction SilentlyContinue
-        if ($Office365GPO.ServiceProfileId -ne $null)
+        if ($Office365GPO.ServiceProfileId -ne "")
             {
                 $OfficeManaged = "Servicing Profile (Office Health Center)"
             }
