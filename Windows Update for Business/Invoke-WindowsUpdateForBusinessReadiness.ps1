@@ -798,17 +798,17 @@ If ($Office365Configuration.TeamsAddon -ne $null)
     }
 else
     {
-        Write-Host "Microsoft 365 apps seems to be missing - No data found" -ForegroundColor red
+        Write-Host "Microsoft Teams Addon data not found" -ForegroundColor red
     }
 
 Write-Host -NoNewline "  Microsoft 365 Apps update enabled: "
-If ($Office365Configuration.UpdatesEnabled -ne $null)
+If ($Office365Configuration.UpdatesEnabled -eq "True")
     { 
         Write-host $Office365Configuration.UpdatesEnabled -ForegroundColor Green
     }
 else
     {
-        Write-Host "Microsoft 365 apps seems to be missing - No data found" -ForegroundColor red
+        Write-Host "Microsoft 365 apps auto updates has been disabled. This means it will never update if install source is CDN" -ForegroundColor red
     }
 
 Write-Host -NoNewline "  Microsoft 365 Apps install source: "
@@ -821,7 +821,7 @@ else
         Write-Host "No installation source found!" -ForegroundColor Yellow
     }
 
-Write-Host -NoNewline "  Microsoft 365 Apps install URL: "
+Write-Host -NoNewline "  Microsoft 365 Apps original install base: "
 If ($Office365Installation.BaseUrl -ne $null)
     { 
         Write-host $Office365Installation.BaseUrl -ForegroundColor Green
@@ -831,14 +831,14 @@ else
         Write-Host "No installation source found!" -ForegroundColor Red
     }
 
-Write-Host -NoNewline "  Microsoft 365 Apps management: "
-If ($Office365Common.OfficeManagementState -ne $null)
+Write-Host -NoNewline "  Microsoft 365 Apps patch management by: "
+If ($Office365Configuration.OfficeMgmtCOM -eq "True")
     { 
-        Write-host $Office365Common.OfficeManagementState -ForegroundColor Green
+        Write-host "Configuration Manager" -ForegroundColor Green
     }
 else
     {
-        Write-Host "No Office Management State found!" -ForegroundColor Red
+        Write-Host "Microsoft CDN" -ForegroundColor green
     }
     
 Write-Host " "
