@@ -813,7 +813,7 @@ If ($Office365Configuration.OneDriveClientAddon -ne $null)
     }
 else
     {
-        Write-Host "Microsoft 365 apps seems to be missing - No data found" -ForegroundColor red
+        Write-Host "Microsoft 365 apps seems to be missing - No data found" -ForegroundColor yellow
     }
 
 Write-Host -NoNewline "  Microsoft 365 Apps Teams Addon: "
@@ -823,7 +823,7 @@ If ($Office365Configuration.TeamsAddon -ne $null)
     }
 else
     {
-        Write-Host "Microsoft Teams Addon data not found" -ForegroundColor red
+        Write-Host "Microsoft Teams Addon data not found" -ForegroundColor yellow
     }
 
 Write-Host -NoNewline "  Microsoft 365 Apps update enabled: "
@@ -867,7 +867,7 @@ If ($Office365Management.'(default)' -eq "C:\Program Files\Common Files\Microsof
     }
 else
     {
-        Write-Host "Unmanaged (CDN)" -ForegroundColor green
+        Write-Host "Unmanaged (CDN)" -ForegroundColor yellow
     }
 
 Write-Host -NoNewline "  Microsoft 365 Apps last check for patch: "
@@ -897,7 +897,7 @@ If ($Office365Updates.UpdateDeadline -ne $Null)
     }
 else
     {
-        Write-Host "No Update Deadline found!" -ForegroundColor red
+        Write-Host "No Update Deadline found!" -ForegroundColor yellow
     }    
 
     
