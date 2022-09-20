@@ -11,7 +11,10 @@
 # This script is provided As Is
 # Compatible with Windows 10 and later
 
-Special thanks to Trevor, Jannik and David for great scripting and inspiration.
+Special thanks to 
+Martin Nothnagel for giving invaluable help how to track Microsoft 365 apps info
+Trevor, Jannik and David for great scripting and inspiration.
+
 #https://smsagent.blog/2021/04/20/get-the-current-patch-level-for-windows-10-with-powershell/
 #https://jannikreinhard.com/2022/08/24/check-autopilot-enrollment-prerequisite/
 #https://www.osdcloud.com/
@@ -20,6 +23,7 @@ Special thanks to Trevor, Jannik and David for great scripting and inspiration.
 
 *HISTORY*
 Thanks to all testers during the development of this - @ncbrady, @jannik_reinhard, @manelrodero, @chriscorriveau, @brianfgonzalez, Jan Vilhelmsen, @ArnieTomasovsky, @maleroytw
+
 
 Version 0.1 - Created first draft
 Version 0.2 - Fixed SKU, Removed the need for local administrative permission by changing a function, added Windows Version, added better text for WindowsUpdate.log, Removed 1014 event
@@ -574,6 +578,27 @@ $WindowsHealthMonitor = Get-ItemPropertyValue -path "HKLM:\SOFTWARE\Microsoft\Po
 $Office365Configuration = Get-ItemProperty -Path  "HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration" -ErrorAction SilentlyContinue
 $Office365Installation = Get-ItemProperty -Path  "HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Scenario\INSTALL" -ErrorAction SilentlyContinue
 $Office365Common = Get-ItemProperty -Path  "HKLM:\SOFTWARE\Microsoft\Office\Common" -ErrorAction SilentlyContinue
+
+#Get last update applied
+$Office365Updates = Get-ItemProperty -Path  "HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Updates" -ErrorAction SilentlyContinue
+$Office365InstallTime = (Get-Date 1/1/1601).AddDays("$($Office365Updates.UpdatesAppliedTime)0000"/864000000000) 
+$Office365LastCheckTime = (Get-Date 1/1/1601).AddDays("$($Office365Updates.UpdateDetectionLastRunTime)0000"/864000000000) 
+
+#Checking if Office365 is either managed by Servicing profiles or Configuration Manager.
+$Office365Management = Get-ItemProperty -path "HKLM:\Software\Classes\CLSID\{B7F1785F-D69B-46F1-92FC-D2DE9C994F13}\InProcServer32" -ErrorAction SilentlyContinue
+
+if ($Office365Management.'(default)' -eq "C:\Program Files\Common Files\Microsoft Shared\ClickToRun\OfficeC2RCom.dll")
+    {
+        $Office365GPO = Get-ItemProperty -Path  "HKLM:\SOFTWARE\Policies\Microsoft\cloud\office\16.0\Common\officeupdate" -ErrorAction SilentlyContinue
+        if ($Office365GPO.IgnoreGPO -ne $null)
+            {
+                if ($Office365GPO.IgnoreGPO -eq (0)) {$OfficeManaged = "Configuration Manager"}
+                if ($Office365GPO.IgnoreGPO -eq (1)) {$OfficeManaged = "Servicing Profile (Office Health Center)"}
+            }
+    }
+
+
+
 if ($Office365Configuration.UpdateChannel -eq ("http://officecdn.microsoft.com/pr/55336b82-a18d-4dd6-b5f6-9e5095c314a6")) {$Office365ConfigurationUpdateChannel = "Monthly Enterprise Channel"}
 if ($Office365Configuration.UpdateChannel -eq ("http://officecdn.microsoft.com/pr/492350f6-3a01-4f97-b9c0-c7c6ddf67d60")) {$Office365ConfigurationUpdateChannel = "Current Channel"}
 if ($Office365Configuration.UpdateChannel -eq ("http://officecdn.microsoft.com/pr/64256afe-f5d9-4f86-8936-8840a6a4f5be")) {$Office365ConfigurationUpdateChannel = "Current Channel (Preview)"}
@@ -806,9 +831,13 @@ If ($Office365Configuration.UpdatesEnabled -eq "True")
     { 
         Write-host $Office365Configuration.UpdatesEnabled -ForegroundColor Green
     }
-else
+elseif ($Office365Configuration.UpdatesEnabled -eq "False")
     {
         Write-Host "Microsoft 365 apps auto updates has been disabled. This means it will never update if install source is CDN" -ForegroundColor red
+    }
+Else
+    {
+        Write-Host "AutoUpdate not found" -ForegroundColor Yellow
     }
 
 Write-Host -NoNewline "  Microsoft 365 Apps install source: "
@@ -832,14 +861,45 @@ else
     }
 
 Write-Host -NoNewline "  Microsoft 365 Apps patch management by: "
-If ($Office365Configuration.OfficeMgmtCOM -eq "True")
+If ($Office365GPO.IgnoreGPO -ne $Null)
     { 
-        Write-host "Configuration Manager" -ForegroundColor Green
+        Write-host $OfficeManaged -ForegroundColor Green
     }
 else
     {
-        Write-Host "Microsoft CDN" -ForegroundColor green
+        Write-Host "Unmanaged (CDN)" -ForegroundColor green
     }
+
+Write-Host -NoNewline "  Microsoft 365 Apps last check for patch: "
+If ($Office365LastCheckTime -ne $Null)
+    { 
+        Write-host $Office365LastCheckTime -ForegroundColor Green
+    }
+else
+    {
+        Write-Host "Not able to find data!" -ForegroundColor red
+    }
+
+Write-Host -NoNewline "  Microsoft 365 Apps last patched: "
+If ($Office365InstallTime -ne $Null)
+    { 
+        Write-host $Office365InstallTime -ForegroundColor Green
+    }
+else
+    {
+        Write-Host "Not able to find data!" -ForegroundColor red
+    }
+
+Write-Host -NoNewline "  Microsoft 365 Apps update deadline: "
+If ($Office365Updates.UpdateDeadline -ne $Null)
+    { 
+        Write-host "$($Office365Updates.UpdateDeadline) days" -ForegroundColor Green
+    }
+else
+    {
+        Write-Host "No Update Deadline found!" -ForegroundColor red
+    }    
+
     
 Write-Host " "
 Write-Host -NoNewline "* ENDPOINT CONNECTIONS *`n" -ForegroundColor Yellow
