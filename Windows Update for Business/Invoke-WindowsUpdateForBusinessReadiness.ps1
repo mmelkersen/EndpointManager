@@ -589,11 +589,11 @@ $Office365Management = Get-ItemProperty -path "HKLM:\Software\Classes\CLSID\{B7F
 
 if ($Office365Management.'(default)' -eq "C:\Program Files\Common Files\Microsoft Shared\ClickToRun\OfficeC2RCom.dll")
     {
-        $Office365GPO = Get-ItemProperty -Path  "HKLM:\SOFTWARE\Policies\Microsoft\cloud\office\16.0\Common\officeupdate" -ErrorAction SilentlyContinue
-        if ($Office365GPO.IgnoreGPO -ne $null)
+        $OfficeManaged = "Configuration Manager"
+        $Office365GPO = Get-ItemProperty -Path  "HKLM:\SOFTWARE\Microsoft\Office\C2RSvcMgr" -ErrorAction SilentlyContinue
+        if ($Office365GPO.ServiceProfileId -ne $null)
             {
-                if ($Office365GPO.IgnoreGPO -eq (0)) {$OfficeManaged = "Configuration Manager"}
-                if ($Office365GPO.IgnoreGPO -eq (1)) {$OfficeManaged = "Servicing Profile (Office Health Center)"}
+                $OfficeManaged = "Servicing Profile (Office Health Center)"
             }
     }
 
@@ -861,7 +861,7 @@ else
     }
 
 Write-Host -NoNewline "  Microsoft 365 Apps patch management by: "
-If ($Office365GPO.IgnoreGPO -ne $Null)
+If ($Office365Management.'(default)' -eq "C:\Program Files\Common Files\Microsoft Shared\ClickToRun\OfficeC2RCom.dll")
     { 
         Write-host $OfficeManaged -ForegroundColor Green
     }
