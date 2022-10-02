@@ -3,7 +3,7 @@
 
 # Created on:   13.09.2022
 # Created by:   Mattias Melkersen
-# Version:	    0.6 
+# Version:	    0.8 
 # Mail:         mm@mindcore.dk
 # Twitter:      MMelkersen
 # Function:     Sample script to determine that a device does the right thing against Windows Update for Business
@@ -13,6 +13,7 @@
 
 Special thanks to 
 Martin Nothnagel for giving invaluable help how to track Microsoft 365 apps info
+Niall Brady who really tested this through
 Trevor, Jannik and David for great scripting and inspiration.
 
 #https://smsagent.blog/2021/04/20/get-the-current-patch-level-for-windows-10-with-powershell/
@@ -31,21 +32,24 @@ Version 0.3 - Issues getting data from Microsoft Website mitigated, Telemetry ga
 Version 0.4 - Correcting Windows 10/Windows 11 gather info which was incorrect, Added Quality Update to the log, Added extended quality log from Windows Update log, added check for C:\Temp
 Version 0.5 - Wording
 Version 0.6 - Able to fetch info from country specific eventlogs, added Office 365 patch level info.
+Version 0.7 - Added ping request to telemetry endpoints.
+Version 0.8 - Change the Temp folder from C:\temp to a variable $env:temp
 
 #>
 
 $Title = 'Invoke-WindowsUpdateForBusinessReadiness'
-$ScriptVersion = '0.6'
+$ScriptVersion = '0.8'
 
-$tempPath = Test-Path -Path "C:\Temp"
+$tempPath = Test-Path -Path $env:temp
 If ($tempPath -eq $false)
     {
-        Write-Host "C:\temp does not appear on your device. Please create it"
+        Write-Host "$env:Temp does not appear on your device. Please create it"
         $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     }
 
 
-$WindowsUpdateLog = "C:\Temp\Windowsupdate.log"
+$WindowsUpdateLog = "$env:temp\Windowsupdate.log"
+
 Get-WindowsUpdateLog -LogPath $WindowsUpdateLog -Verbose
 
 Write-Host ""
@@ -282,15 +286,15 @@ $host.ui.RawUI.BackgroundColor = ($bckgrnd = 'Black')
 #================================================
 # Temp
 #================================================
-if (!(Test-Path "$env:SystemDrive\Temp")) {
-    New-Item -Path "$env:SystemDrive\Temp" -ItemType Directory -Force
+if (!(Test-Path "$env:temp")) {
+    New-Item -Path "$env:temp" -ItemType Directory -Force
 }
 #================================================
 # Transcript
 #================================================
-$Transcript = "$((Get-Date).ToString('yyyy-MM-dd-HHmmss'))-$Title.log"
-Start-Transcript -Path (Join-Path "$env:SystemDrive\Temp" $Transcript) -ErrorAction Ignore
-$host.ui.RawUI.WindowTitle = "$Title $env:SystemDrive\Temp\$Transcript"
+$Transcript = "$((Get-Date).ToString('yyyy-MM-dd-HHmmss'))-$($Title)v.$($ScriptVersion).log"
+Start-Transcript -Path (Join-Path "$env:temp" $Transcript) -ErrorAction Ignore
+$host.ui.RawUI.WindowTitle = "$Title $env:temp\$Transcript"
 #================================================
 # Main Variables
 #================================================
@@ -330,7 +334,7 @@ $FilterHashtable = @{
 #================================================
 $Results = Get-WinEvent -FilterHashtable $FilterHashtable -ErrorAction Ignore | Sort-Object TimeCreated | Where-Object {$_.ID -in $IncludeEventSource}
 $Results = $Results | Select-Object TimeCreated,LevelDisplayName,LogName,Id, @{Name='Message';Expression={ ($_.Message -Split '\n')[0]}}
-$Clixml = "$env:SystemDrive\Temp\$((Get-Date).ToString('yyyy-MM-dd-HHmmss'))-Events.clixml"
+$Clixml = "$env:temp\$((Get-Date).ToString('yyyy-MM-dd-HHmmss'))-Events.clixml"
 $Results | Export-Clixml -Path $Clixml
 #================================================
 # Display Results
@@ -380,7 +384,7 @@ if ($Eventlog.Message -like ("*Description*")) {$PatternToSearchFU = "Feature up
 if ($OSLanguage.Name -eq ("fr-FR")) {$PatternToSearchFU = ""}
 if ($OSLanguage.Name -eq ("de-DE")) {$PatternToSearchFU = ""}
 
-$Result = Get-Content -Path $WindowsUpdateLog | Select-String -Pattern $PatternToSearchFU | ForEach-Object {$_.Line.Substring([regex]::match($_.Line,"{").index+1,32)} 
+$Result = Get-Content -Path $WindowsUpdateLog | Select-String -Pattern $PatternToSearchFU | ForEach-Object {$_.Line.Substring([regex]::match($_.Line,"{").index+1,32)} -ErrorAction Ignore
 
 If ($Result -ne $null)
     { 
@@ -388,7 +392,8 @@ If ($Result -ne $null)
     }
 else
     {
-        Write-Host "  No Feature Update data found in WindowsUpdate.log. This message appears if there were no recent Feature update installed." -ForegroundColor red
+        Write-Host "  No Feature Update data found in WindowsUpdate.log." -nonewline -ForegroundColor red
+        Write-host " (This message appears if there were no recent Feature update installed.)"
     }    
 
     foreach ($Item in $WindowsUpdateLogResults) {
@@ -421,15 +426,23 @@ Write-Host -ForegroundColor Yellow "* Windows Update - CUMULATIVE UPDATE LOGS *"
 #Looking throught WindowsUpdates.log to find Quality patch
 $PatternToSearchQA = get-date -Format yyyy-MM
 
-$Result = Get-Content -Path $WindowsUpdateLog | Select-String -Pattern $PatternToSearch | ForEach-Object {$_.Line.Substring([regex]::match($_.Line,"{").index+1,32)} 
+Try 
+{
+    $Result1 = Get-Content -Path $WindowsUpdateLog | Select-String -Pattern $PatternToSearch | ForEach-Object {$_.Line.Substring([regex]::match($_.Line,"{").index+1,32)} -ErrorAction SilentlyContinue 
+}
+catch 
+{
+    $Result1 = $null
+}
 
-If ($Result -ne $null)
+If ($Result1 -ne $null)
     { 
-        $WindowsUpdateLogResults = Get-Content -Path $WindowsUpdateLog | Select-String -Pattern $Result.Item($Result.Count -1) -ErrorAction SilentlyContinue
+        $WindowsUpdateLogResults = Get-Content -Path $WindowsUpdateLog | Select-String -Pattern $Result1.Item($Result1.Count -1) -ErrorAction SilentlyContinue
     }
 else
     {
-        Write-Host "  No Feature Update data found in WindowsUpdate.log. This message appears if there were no recent Feature update installed." -ForegroundColor red
+        Write-Host "  No cumulative Update data found in WindowsUpdate.log." -nonewline -ForegroundColor red
+        Write-host " (This message appears if there were no recent Feature update installed.)"
     }    
 
     foreach ($Item in $WindowsUpdateLogResults) {
@@ -479,9 +492,11 @@ else
         
         }
         
-        }     
+        }
+
+        #https://learn.microsoft.com/en-us/windows/deployment/update/update-compliance-v2-prerequisites#data-transmission-requirements
 function Get-ConnectionTest {
-    @("dl.delivery.mp.microsoft.com", "update.microsoft.com", "tsfe.trafficshaping.dsp.mp.microsoft.com", "devicelistenerprod.microsoft.com", "login.windows.net") | ForEach-Object {
+    @("dl.delivery.mp.microsoft.com", "update.microsoft.com", "tsfe.trafficshaping.dsp.mp.microsoft.com", "devicelistenerprod.microsoft.com", "login.windows.net", "v10c.events.data.microsoft.com,", "v10.vortex-win.data.microsoft.com", "settings-win.data.microsoft.com", "adl.windows.com", "watson.telemetry.microsoft.com", "oca.telemetry.microsoft.com") | ForEach-Object {
         $result = (Test-NetConnection -Port 443 -ComputerName $_)    
         Write-Host -NoNewline "  $($result.ComputerName) ($($result.RemoteAddress)): "
         if($result.TcpTestSucceeded) {
@@ -684,7 +699,7 @@ if($SafeGuard -eq "2")
     }
     Else
     {
-        Write-Host -ForegroundColor red "SafeGuard found futher debug use: Install-Module -name FU.WhyAMIBlocked"
+        Write-Host -ForegroundColor red "SafeGuard found for further debug use: Install-Module -name FU.WhyAMIBlocked"
     }
 
 Write-Host -NoNewline "  Microsoft Health Tool Status: "
@@ -728,7 +743,8 @@ If ($FeatureName -ne $null)
     }
 else
     {
-        Write-Host "Feature Update not applied recently - No data found" -ForegroundColor red
+        Write-Host "Feature Update not applied recently" -NoNewline -ForegroundColor yellow
+        Write-Host " (No data found)" -ForegroundColor red
     }
 
 Write-Host -NoNewline "  Feature Update State: "
@@ -738,7 +754,8 @@ If ($FeatureName -ne $null)
     }
 else
     {
-        Write-Host "Feature Update not applied recently - No data found" -ForegroundColor red
+        Write-Host "Feature Update not applied recently" -NoNewline -ForegroundColor yellow
+        Write-Host " (No data found)" -ForegroundColor red
     }
 
 Write-Host -NoNewline "  Feature Update Downloaded: "
@@ -748,7 +765,8 @@ If ($FeatureUpdateDownloadPath -ne $null)
     }
 else
     {
-        Write-Host "Feature Update not applied recently - No data found" -ForegroundColor red
+        Write-Host "Feature Update not applied recently" -NoNewline -ForegroundColor yellow
+        Write-Host " (No data found)" -ForegroundColor red
     }
 
 Write-Host ""
@@ -768,7 +786,9 @@ foreach ($Item in $Results)
 
 If ($QAFound -eq 0)
 { 
-    Write-Host "  Quality Update not applied recently - No data found" -ForegroundColor red
+    Write-Host "  Quality Update:" -NoNewline
+    Write-Host " Quality Update not applied recently" -NoNewline -ForegroundColor yellow
+    Write-Host " (No data found)" -ForegroundColor red
 }
 
 
