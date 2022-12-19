@@ -1,0 +1,607 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "## Lenovo Device Health\n---\n\nWelcome to the Lenovo Device Health workbook. This workbook will help \n\n- Identify the status of updates that have been installed by Commercial Vantage on your endpoints\n- View battery health\n- Check warranty expiration",
+        "style": "info"
+      },
+      "name": "Title"
+    },
+    {
+      "type": 11,
+      "content": {
+        "version": "LinkItem/1.0",
+        "style": "tabs",
+        "links": [
+          {
+            "id": "44d4f371-c779-48d2-978d-b770f9dca3e9",
+            "cellValue": "Tab",
+            "linkTarget": "parameter",
+            "linkLabel": "Update Status",
+            "subTarget": "UpdateStatus",
+            "preText": "Update Status",
+            "style": "link"
+          },
+          {
+            "id": "163e944a-e870-4d30-9904-698ef3e5397b",
+            "cellValue": "Tab",
+            "linkTarget": "parameter",
+            "linkLabel": "Battery Health",
+            "subTarget": "Battery",
+            "style": "link"
+          },
+          {
+            "id": "9c148bd6-5000-4ef9-a822-34af7715e573",
+            "cellValue": "Tab",
+            "linkTarget": "parameter",
+            "linkLabel": "Warranty",
+            "subTarget": "WarrantyExpiration",
+            "style": "link"
+          }
+        ]
+      },
+      "name": "Tabs"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "Lenovo_Device_Status_CL\r\n| where Status_s == 'InstallSuccess' or Status_s == 'InstallFailed' or Status_s == 'DownloadFailed' or Status_s == 'AlreadyInstalled' or Status_s == 'NotApplicable'\r\n| distinct Status_s, PackageID_s\r\n| summarize Lenovo_Device_Status_CL = count() by Status_s",
+        "size": 3,
+        "title": "Updates Install Status",
+        "noDataMessageStyle": 5,
+        "timeContext": {
+          "durationMs": 2592000000
+        },
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "piechart",
+        "gridSettings": {
+          "sortBy": [
+            {
+              "itemKey": "PackageID_s",
+              "sortOrder": 2
+            }
+          ],
+          "labelSettings": [
+            {
+              "columnId": "Hostname_s",
+              "label": "Computer Name"
+            },
+            {
+              "columnId": "MTM_s",
+              "label": "MTM"
+            },
+            {
+              "columnId": "PackageID_s",
+              "label": "PackageID"
+            },
+            {
+              "columnId": "Title_s",
+              "label": "Update"
+            },
+            {
+              "columnId": "Lenovo_Device_Status_CL",
+              "label": "Failure Count"
+            }
+          ]
+        },
+        "sortBy": [
+          {
+            "itemKey": "PackageID_s",
+            "sortOrder": 2
+          }
+        ],
+        "chartSettings": {
+          "seriesLabelSettings": [
+            {
+              "seriesName": "InstallSuccess",
+              "label": "Updates Installed Successfully",
+              "color": "green"
+            },
+            {
+              "seriesName": "InstallFailed",
+              "label": "Updates Failed to Install",
+              "color": "red"
+            },
+            {
+              "seriesName": "DownloadFailed",
+              "label": "Updates Failed to Download",
+              "color": "orange"
+            },
+            {
+              "seriesName": "NotApplicable",
+              "label": "Not Applicable",
+              "color": "gray"
+            },
+            {
+              "seriesName": "AlreadyInstalled",
+              "label": "Already Installed",
+              "color": "greenDark"
+            }
+          ]
+        }
+      },
+      "conditionalVisibility": {
+        "parameterName": "Tab",
+        "comparison": "isEqualTo",
+        "value": "UpdateStatus"
+      },
+      "name": "Update Status"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": "editable",
+        "title": "Updates Successfully Installed (last 30 days)",
+        "expandable": true,
+        "expanded": true,
+        "items": [
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "Lenovo_Device_Status_CL\r\n| where Status_s == 'InstallSuccess'\r\n| project PackageID_s, Product_s, Hostname_s, TimeGenerated, DriverName=Title_s, Version=Version_s, Severity=Severity_s\r\n| summarize arg_max(TimeGenerated, *) by PackageID_s\r\n| order by Hostname_s\r\n",
+              "size": 0,
+              "timeContext": {
+                "durationMs": 2592000000
+              },
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "TimeGenerated",
+                    "formatter": 5
+                  },
+                  {
+                    "columnMatch": "Hostname_s",
+                    "formatter": 0,
+                    "formatOptions": {
+                      "customColumnWidthSetting": "26.1429ch"
+                    }
+                  }
+                ],
+                "sortBy": [
+                  {
+                    "itemKey": "PackageID_s",
+                    "sortOrder": 1
+                  }
+                ],
+                "labelSettings": [
+                  {
+                    "columnId": "PackageID_s",
+                    "label": "PackageID"
+                  },
+                  {
+                    "columnId": "Product_s",
+                    "label": "Product"
+                  },
+                  {
+                    "columnId": "Hostname_s",
+                    "label": "Computer Name"
+                  }
+                ]
+              },
+              "sortBy": [
+                {
+                  "itemKey": "PackageID_s",
+                  "sortOrder": 1
+                }
+              ]
+            },
+            "name": "InstallSuccess"
+          }
+        ]
+      },
+      "conditionalVisibility": {
+        "parameterName": "Tab",
+        "comparison": "isEqualTo",
+        "value": "UpdateStatus"
+      },
+      "name": "InstallSuccess"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": "editable",
+        "title": "Updates Already Installed",
+        "expandable": true,
+        "expanded": true,
+        "items": [
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "Lenovo_Device_Status_CL\r\n| where Status_s == 'AlreadyInstalled'\r\n| project PackageID_s, Product_s, Hostname_s, TimeGenerated, DriverName=Title_s, Version=Version_s, Severity=Severity_s\r\n| summarize arg_max(TimeGenerated, *) by PackageID_s\r\n| order by Hostname_s",
+              "size": 0,
+              "timeContext": {
+                "durationMs": 2592000000
+              },
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "gridSettings": {
+                "labelSettings": [
+                  {
+                    "columnId": "PackageID_s",
+                    "label": "PackageID"
+                  },
+                  {
+                    "columnId": "Product_s",
+                    "label": "Model"
+                  },
+                  {
+                    "columnId": "Hostname_s",
+                    "label": "Computer Name"
+                  }
+                ]
+              }
+            },
+            "name": "InstallFailed"
+          }
+        ]
+      },
+      "conditionalVisibility": {
+        "parameterName": "Tab",
+        "comparison": "isEqualTo",
+        "value": "UpdateStatus"
+      },
+      "name": "AlreadyInstalled"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": "editable",
+        "title": "Updates Failed to Install",
+        "expandable": true,
+        "items": [
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "Lenovo_Device_Status_CL\r\n| where Status_s == 'InstallFailed'\r\n| project PackageID_s, Title_s, Hostname_s, Product_s",
+              "size": 0,
+              "timeContext": {
+                "durationMs": 2592000000
+              },
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "gridSettings": {
+                "labelSettings": [
+                  {
+                    "columnId": "PackageID_s",
+                    "label": "PackageID"
+                  },
+                  {
+                    "columnId": "Title_s",
+                    "label": "Update"
+                  },
+                  {
+                    "columnId": "Hostname_s",
+                    "label": "Computer Name"
+                  },
+                  {
+                    "columnId": "Product_s",
+                    "label": "Model"
+                  }
+                ]
+              }
+            },
+            "name": "InstallFailed"
+          }
+        ]
+      },
+      "conditionalVisibility": {
+        "parameterName": "Tab",
+        "comparison": "isEqualTo",
+        "value": "UpdateStatus"
+      },
+      "name": "InstallFailed"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": "editable",
+        "title": "Updates Failed to Download",
+        "expandable": true,
+        "loadType": "always",
+        "items": [
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "Lenovo_Device_Status_CL\r\n| where Status_s == 'DownloadFailed'\r\n| project PackageID_s, Title_s, Hostname_s, Product_s",
+              "size": 0,
+              "timeContext": {
+                "durationMs": 2592000000
+              },
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "gridSettings": {
+                "labelSettings": [
+                  {
+                    "columnId": "PackageID_s",
+                    "label": "PackageID"
+                  },
+                  {
+                    "columnId": "Title_s",
+                    "label": "Update"
+                  },
+                  {
+                    "columnId": "Hostname_s",
+                    "label": "Computer Name"
+                  },
+                  {
+                    "columnId": "Product_s",
+                    "label": "Model"
+                  }
+                ]
+              }
+            },
+            "name": "DownloadFailed"
+          }
+        ]
+      },
+      "conditionalVisibility": {
+        "parameterName": "Tab",
+        "comparison": "isEqualTo",
+        "value": "UpdateStatus"
+      },
+      "name": "DownloadFailed"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "Lenovo_Device_Status_CL\r\n| where BatteryHealth_s == 'Green' or BatteryHealth_s == 'Red'\r\n| distinct BatteryHealth_s, Hostname_s\r\n| summarize Lenovo_Device_Status_CL = count() by BatteryHealth_s\r\n| render piechart",
+        "size": 3,
+        "timeContext": {
+          "durationMs": 2592000000
+        },
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "chartSettings": {
+          "seriesLabelSettings": [
+            {
+              "seriesName": "Green",
+              "label": "Batteries in Good Health",
+              "color": "green"
+            },
+            {
+              "seriesName": "Red",
+              "label": "Batteries in Bad Health",
+              "color": "red"
+            }
+          ]
+        }
+      },
+      "conditionalVisibility": {
+        "parameterName": "Tab",
+        "comparison": "isEqualTo",
+        "value": "Battery"
+      },
+      "name": "Battery Health"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": "editable",
+        "title": "Batteries in Good Health",
+        "expandable": true,
+        "expanded": true,
+        "loadType": "always",
+        "items": [
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "Lenovo_Device_Status_CL\r\n| where BatteryHealth_s == 'Green'\r\n| distinct Hostname_s, MTM_s, Product_s",
+              "size": 0,
+              "timeContext": {
+                "durationMs": 2592000000
+              },
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "gridSettings": {
+                "labelSettings": [
+                  {
+                    "columnId": "Hostname_s",
+                    "label": "Hostname"
+                  }
+                ]
+              }
+            },
+            "name": "Battery Health-Good"
+          }
+        ]
+      },
+      "conditionalVisibility": {
+        "parameterName": "Tab",
+        "comparison": "isEqualTo",
+        "value": "Battery"
+      },
+      "name": "Battery Health-Good"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": "editable",
+        "title": "Batteries in Bad Health",
+        "expandable": true,
+        "loadType": "always",
+        "items": [
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "Lenovo_Device_Status_CL\r\n| where BatteryHealth_s == 'Red'\r\n| distinct Hostname_s, MTM_s, Product_s",
+              "size": 0,
+              "timeContext": {
+                "durationMs": 2592000000
+              },
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "BatteryHealth-Bad"
+          }
+        ]
+      },
+      "conditionalVisibility": {
+        "parameterName": "Tab",
+        "comparison": "isEqualTo",
+        "value": "Battery"
+      },
+      "name": "Battery Health-Bad"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "Lenovo_Device_Status_CL\r\n| extend WarrantyEnd_s = substring(WarrantyEnd_s, 0, 4)\r\n| summarize by WarrantyEnd_s, Hostname_s\r\n| summarize Lenovo_Device_Status_CL = count() by WarrantyEnd_s\r\n| render piechart",
+        "size": 3,
+        "title": "Warranty Expiration by Year",
+        "timeContext": {
+          "durationMs": 2592000000
+        },
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "gridSettings": {
+          "sortBy": [
+            {
+              "itemKey": "WarrantyEnd_s",
+              "sortOrder": 2
+            }
+          ]
+        },
+        "sortBy": [
+          {
+            "itemKey": "WarrantyEnd_s",
+            "sortOrder": 2
+          }
+        ],
+        "chartSettings": {
+          "seriesLabelSettings": [
+            {
+              "seriesName": "2024",
+              "color": "greenDark"
+            },
+            {
+              "seriesName": "2023",
+              "color": "orange"
+            },
+            {
+              "seriesName": "2025",
+              "color": "green"
+            },
+            {
+              "seriesName": "2020",
+              "color": "red"
+            },
+            {
+              "seriesName": "2022",
+              "color": "redDark"
+            }
+          ]
+        }
+      },
+      "conditionalVisibility": {
+        "parameterName": "Tab",
+        "comparison": "isEqualTo",
+        "value": "WarrantyExpiration"
+      },
+      "name": "Warranty Expiration"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": "editable",
+        "title": "Warranty Expiration for All Devices",
+        "expandable": true,
+        "expanded": true,
+        "loadType": "always",
+        "items": [
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "Lenovo_Device_Status_CL\r\n| distinct  WarrantyEnd_s, Hostname_s, Product_s\r\n",
+              "size": 0,
+              "timeContext": {
+                "durationMs": 2592000000
+              },
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "Hostname_s",
+                    "formatter": 0,
+                    "formatOptions": {
+                      "customColumnWidthSetting": "23.1429ch"
+                    }
+                  },
+                  {
+                    "columnMatch": "BatteryHealth_s",
+                    "formatter": 1
+                  }
+                ],
+                "sortBy": [
+                  {
+                    "itemKey": "WarrantyEnd_s",
+                    "sortOrder": 1
+                  }
+                ],
+                "labelSettings": [
+                  {
+                    "columnId": "WarrantyEnd_s",
+                    "label": "Warranty End"
+                  },
+                  {
+                    "columnId": "Hostname_s",
+                    "label": "Computer Name"
+                  },
+                  {
+                    "columnId": "Product_s",
+                    "label": "Product"
+                  }
+                ]
+              },
+              "sortBy": [
+                {
+                  "itemKey": "WarrantyEnd_s",
+                  "sortOrder": 1
+                }
+              ],
+              "tileSettings": {
+                "showBorder": false
+              },
+              "graphSettings": {
+                "type": 0
+              }
+            },
+            "name": "WarrantyExpiration"
+          }
+        ]
+      },
+      "conditionalVisibility": {
+        "parameterName": "Tab",
+        "comparison": "isEqualTo",
+        "value": "WarrantyExpiration"
+      },
+      "name": "WarrantyExpiration"
+    }
+  ],
+  "fallbackResourceIds": [
+    "/subscriptions/6d5f2b69-55a1-4a91-ad67-dfec8caec766/resourceGroups/Logs-and-Sentinel/providers/Microsoft.OperationalInsights/workspaces/Mindcore-LogAnalytics"
+  ],
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}
