@@ -4,7 +4,7 @@
     {
       "type": 1,
       "content": {
-        "json": "## Lenovo Device Health\n---\n\nWelcome to the Lenovo Device Health workbook. This workbook will help \n\n- Identify the status of updates that have been installed by Commercial Vantage on your endpoints\n- View battery health\n- Check warranty expiration",
+        "json": "## Lenovo Device Health\n---\n\nWelcome to the Lenovo Device Health workbook. This workbook will help \n\n- Identify the status of updates that have been installed by Commercial Vantage on your endpoints\n- View battery health\n- Check warranty expiration\n- Check BIOS update\n- Check BIOS Configuration",
         "style": "info"
       },
       "name": "Title"
@@ -39,6 +39,22 @@
             "linkLabel": "Warranty",
             "subTarget": "WarrantyExpiration",
             "style": "link"
+          },
+          {
+            "id": "6df1d658-1c1a-4924-a6cb-e42cae8d8e21",
+            "cellValue": "Tab",
+            "linkTarget": "parameter",
+            "linkLabel": "BIOS",
+            "subTarget": "BIOS",
+            "style": "link"
+          },
+          {
+            "id": "a448a2d1-e6de-442b-afdc-ae4cfcafdbb6",
+            "cellValue": "Tab",
+            "linkTarget": "parameter",
+            "linkLabel": "BIOS Configuration",
+            "subTarget": "BIOS Configuration",
+            "style": "link"
           }
         ]
       },
@@ -50,7 +66,7 @@
         "version": "KqlItem/1.0",
         "query": "Lenovo_Device_Status_CL\r\n| where Status_s == 'InstallSuccess' or Status_s == 'InstallFailed' or Status_s == 'DownloadFailed' or Status_s == 'AlreadyInstalled' or Status_s == 'NotApplicable'\r\n| distinct Status_s, PackageID_s\r\n| summarize Lenovo_Device_Status_CL = count() by Status_s",
         "size": 3,
-        "title": "Updates Install Status",
+        "title": "Updates Install Status (Data last 30 days)",
         "noDataMessageStyle": 5,
         "timeContext": {
           "durationMs": 2592000000
@@ -361,6 +377,7 @@
         "version": "KqlItem/1.0",
         "query": "Lenovo_Device_Status_CL\r\n| where BatteryHealth_s == 'Green' or BatteryHealth_s == 'Red'\r\n| distinct BatteryHealth_s, Hostname_s\r\n| summarize Lenovo_Device_Status_CL = count() by BatteryHealth_s\r\n| render piechart",
         "size": 3,
+        "title": "Battery status (Data last 30 days)",
         "timeContext": {
           "durationMs": 2592000000
         },
@@ -467,7 +484,7 @@
         "version": "KqlItem/1.0",
         "query": "Lenovo_Device_Status_CL\r\n| extend WarrantyEnd_s = substring(WarrantyEnd_s, 0, 4)\r\n| summarize by WarrantyEnd_s, Hostname_s\r\n| summarize Lenovo_Device_Status_CL = count() by WarrantyEnd_s\r\n| render piechart",
         "size": 3,
-        "title": "Warranty Expiration by Year",
+        "title": "Warranty Expiration by Year (Data last 30 days)",
         "timeContext": {
           "durationMs": 2592000000
         },
@@ -533,7 +550,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "Lenovo_Device_Status_CL\r\n| distinct  WarrantyEnd_s, Hostname_s, Product_s\r\n",
+              "query": "Lenovo_Device_Status_CL\r\n| distinct  WarrantyEnd_s, Hostname_s, Product_s",
               "size": 0,
               "timeContext": {
                 "durationMs": 2592000000
@@ -548,10 +565,6 @@
                     "formatOptions": {
                       "customColumnWidthSetting": "23.1429ch"
                     }
-                  },
-                  {
-                    "columnMatch": "BatteryHealth_s",
-                    "formatter": 1
                   }
                 ],
                 "sortBy": [
@@ -598,10 +611,300 @@
         "value": "WarrantyExpiration"
       },
       "name": "WarrantyExpiration"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "Lenovo_Device_BIOS_CL\r\n| summarize by BIOSUpToDate_s, ComputerName_s\r\n| summarize Lenovo_Device_BIOS_CL = count() by BIOSUpToDate_s\r\n| render piechart",
+        "size": 3,
+        "title": "BIOS UP2DATE (Data last 30 days)",
+        "timeContext": {
+          "durationMs": 2592000000
+        },
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "gridSettings": {
+          "sortBy": [
+            {
+              "itemKey": "WarrantyEnd_s",
+              "sortOrder": 2
+            }
+          ]
+        },
+        "sortBy": [
+          {
+            "itemKey": "WarrantyEnd_s",
+            "sortOrder": 2
+          }
+        ],
+        "chartSettings": {
+          "seriesLabelSettings": [
+            {
+              "seriesName": "2024",
+              "color": "greenDark"
+            },
+            {
+              "seriesName": "2023",
+              "color": "orange"
+            },
+            {
+              "seriesName": "2025",
+              "color": "green"
+            },
+            {
+              "seriesName": "2020",
+              "color": "red"
+            },
+            {
+              "seriesName": "2022",
+              "color": "redDark"
+            },
+            {
+              "seriesName": "No",
+              "color": "redDark"
+            },
+            {
+              "seriesName": "Yes",
+              "color": "green"
+            }
+          ]
+        }
+      },
+      "conditionalVisibility": {
+        "parameterName": "Tab",
+        "comparison": "isEqualTo",
+        "value": "BIOS"
+      },
+      "name": "BIOS - Copy"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": "editable",
+        "title": "BIOS Details for NON Updated Devices",
+        "expandable": true,
+        "expanded": true,
+        "loadType": "always",
+        "items": [
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "Lenovo_Device_BIOS_CL \r\n| where BIOSUpToDate_s == \"No\"\r\n| distinct  ComputerName_s, UserName_s, BIOSUpToDate_s, ModelFamilyName_s, BIOSCurrentVersionFull_s, BIOSNewVersion_s, NotUpdatedSince_d",
+              "size": 0,
+              "timeContext": {
+                "durationMs": 2592000000
+              },
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "Hostname_s",
+                    "formatter": 0,
+                    "formatOptions": {
+                      "customColumnWidthSetting": "23.1429ch"
+                    }
+                  }
+                ],
+                "labelSettings": [
+                  {
+                    "columnId": "ComputerName_s",
+                    "label": "ComputerName"
+                  },
+                  {
+                    "columnId": "UserName_s",
+                    "label": "UserName"
+                  },
+                  {
+                    "columnId": "BIOSUpToDate_s",
+                    "label": "BIOS Up 2 Date"
+                  },
+                  {
+                    "columnId": "ModelFamilyName_s",
+                    "label": "Device Model"
+                  },
+                  {
+                    "columnId": "BIOSCurrentVersionFull_s",
+                    "label": "BIOS Current Version"
+                  },
+                  {
+                    "columnId": "BIOSNewVersion_s",
+                    "label": "BIOS New Version"
+                  },
+                  {
+                    "columnId": "NotUpdatedSince_d",
+                    "label": "X days since last update"
+                  }
+                ]
+              },
+              "sortBy": [],
+              "tileSettings": {
+                "showBorder": false
+              },
+              "graphSettings": {
+                "type": 0
+              }
+            },
+            "name": "WarrantyExpiration"
+          }
+        ]
+      },
+      "conditionalVisibility": {
+        "parameterName": "Tab",
+        "comparison": "isEqualTo",
+        "value": "BIOS"
+      },
+      "name": "BIOS details"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": "editable",
+        "title": "BIOS Details for Updated Devices",
+        "expandable": true,
+        "expanded": true,
+        "loadType": "always",
+        "items": [
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "Lenovo_Device_BIOS_CL \r\n| where BIOSUpToDate_s == \"Yes\"\r\n| distinct  ComputerName_s, UserName_s, BIOSUpToDate_s, ModelFamilyName_s, BIOSCurrentVersionFull_s, BIOSNewVersion_s",
+              "size": 0,
+              "timeContext": {
+                "durationMs": 2592000000
+              },
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "Hostname_s",
+                    "formatter": 0,
+                    "formatOptions": {
+                      "customColumnWidthSetting": "23.1429ch"
+                    }
+                  }
+                ],
+                "labelSettings": [
+                  {
+                    "columnId": "ComputerName_s",
+                    "label": "ComputerName"
+                  },
+                  {
+                    "columnId": "UserName_s",
+                    "label": "UserName"
+                  },
+                  {
+                    "columnId": "BIOSUpToDate_s",
+                    "label": "BIOS Up 2 Date"
+                  },
+                  {
+                    "columnId": "ModelFamilyName_s",
+                    "label": "Device Model"
+                  },
+                  {
+                    "columnId": "BIOSCurrentVersionFull_s",
+                    "label": "BIOS Current Version"
+                  },
+                  {
+                    "columnId": "BIOSNewVersion_s",
+                    "label": "BIOS New Version"
+                  }
+                ]
+              },
+              "sortBy": [],
+              "tileSettings": {
+                "showBorder": false
+              },
+              "graphSettings": {
+                "type": 0
+              }
+            },
+            "name": "WarrantyExpiration"
+          }
+        ]
+      },
+      "conditionalVisibility": {
+        "parameterName": "Tab",
+        "comparison": "isEqualTo",
+        "value": "BIOS"
+      },
+      "name": "BIOS details 1"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": "editable",
+        "title": "BIOS Configuration for Devices",
+        "expandable": true,
+        "expanded": true,
+        "loadType": "always",
+        "items": [
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "Lenovo_Device_BIOS_CL \r\n| distinct  ComputerName_s, UserName_s, ModelFamilyName_s, BIOSConfiguration_s",
+              "size": 0,
+              "timeContext": {
+                "durationMs": 2592000000
+              },
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "Hostname_s",
+                    "formatter": 0,
+                    "formatOptions": {
+                      "customColumnWidthSetting": "23.1429ch"
+                    }
+                  }
+                ],
+                "labelSettings": [
+                  {
+                    "columnId": "ComputerName_s",
+                    "label": "ComputerName"
+                  },
+                  {
+                    "columnId": "UserName_s",
+                    "label": "UserName"
+                  },
+                  {
+                    "columnId": "ModelFamilyName_s",
+                    "label": "Computer Model"
+                  },
+                  {
+                    "columnId": "BIOSConfiguration_s",
+                    "label": "BIOS Configuration"
+                  }
+                ]
+              },
+              "sortBy": [],
+              "tileSettings": {
+                "showBorder": false
+              },
+              "graphSettings": {
+                "type": 0
+              }
+            },
+            "name": "BIOS Configurations"
+          }
+        ]
+      },
+      "conditionalVisibility": {
+        "parameterName": "Tab",
+        "comparison": "isEqualTo",
+        "value": "BIOS Configuration"
+      },
+      "name": "BIOS Configurations"
     }
-  ],
-  "fallbackResourceIds": [
-    "/subscriptions/6d5f2b69-55a1-4a91-ad67-dfec8caec766/resourceGroups/Logs-and-Sentinel/providers/Microsoft.OperationalInsights/workspaces/Mindcore-LogAnalytics"
   ],
   "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
 }

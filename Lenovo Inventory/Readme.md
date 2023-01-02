@@ -1,8 +1,8 @@
 ---
 Title: Lenovo Dashboard and client inventory
-Authors: Philip Jorgensen & Mattias Melkersen
+Authors: Philip Jorgensen, Damien Van Robaeys & Mattias Melkersen
 Owner: Mattias Melkersen
-Date: 19.12.2022
+Date: 02.01.2023
 Description: Operationalize Lenovo devices in your cloud only environment
 ---
 
