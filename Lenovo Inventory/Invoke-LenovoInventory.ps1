@@ -121,20 +121,7 @@ else {
     else {
 
         # Format warranty date for Azure Monitor Workbook
-        $s_Array = $Warranty.EndDate.Split("/")
-        if ($s_Array[0].Length -eq 1) { $s_Array[0] = "0" + $s_Array[0] }
-        if ($s_Array[1].Length -eq 1) { $s_Array[1] = "0" + $s_Array[1] }
-        $s_Array[2] = $s_Array[2].Substring(0, 4)
-        $Warranty = "{0}-{1}-{2}" -f $s_Array[2], $s_Array[0], $s_Array[1]
-        
-        if ($Warranty[0] -eq "-")
-            {
-               $Warranty = $Warranty.Substring(1,10)
-               $year = $Warranty.Substring(6)
-               $Month = $Warranty.Substring(3,2)
-               $Day = $Warranty.Substring(0,2)
-               $Warranty = "$($year)-$($Month)-$($Day)"
-            }
+        $Warranty = Get-Date -Date $Warranty.EndDate -UFormat "%Y-%m-%d"
     
         $Properties = foreach ($Update in $LenovoUpdates) {
             [PSCustomObject]@{
