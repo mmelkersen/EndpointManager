@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Collect Lenovo specific data and upload to Log Analytics
 
@@ -106,8 +106,18 @@ else {
         Write-Output "Run Commercial Vantage and initiate a check for updates..."; Exit 0
     }
 
+	$Chassis = (Get-CimInstance -ClassName Win32_SystemEnclosure).ChassisTypes
+	$Device_Chassis = [string]$chassis
+	If($Chassis -eq 9 -or $Chassis -eq 10 -or $Chassis -eq 14 -or $Chassis -eq 8 -or $Chassis -eq 11 -or $Chassis -eq 12 -or $Chassis -eq 18 -or $Chassis -eq 21 -or $Chassis -eq 31 -or $Chassis -eq 32) 
+		{
+		$Chassis_Type = "Laptop"
+		}
+	else 
+		{
+		$Chassis_Type = "Desktop"
+		}
     $Battery = Get-CimInstance -Namespace root/Lenovo -ClassName Lenovo_Battery
-    if ($null -eq $Battery) {
+    if ($null -eq $Battery -and $chassis_type -eq "Laptop") {
         Write-Output "Lenovo Battery WMI class not present."
         Write-Output "Enable the policy to write battery info to WMI..."; Exit 0
     }
@@ -461,17 +471,6 @@ $Current_User_Profile = Get-ChildItem Registry::\HKEY_USERS | Where-Object { Tes
 $Username = $Current_User_Profile.split("\")[2]	
 
 $BIOS_Ver_Model = "$Get_Current_BIOS_Version ($Get_Current_Model_FamilyName)"
-
-$Chassis = (Get-CimInstance -ClassName Win32_SystemEnclosure).ChassisTypes
-$Device_Chassis = [string]$chassis
-If($Chassis -eq 9 -or $Chassis -eq 10 -or $Chassis -eq 14 -or $Chassis -eq 8 -or $Chassis -eq 11 -or $Chassis -eq 12 -or $Chassis -eq 18 -or $Chassis -eq 21 -or $Chassis -eq 31 -or $Chassis -eq 32) 
-	{
-		$Chassis_Type = "Laptop"
-	}
-else 
-	{
-		$Chassis_Type = "Desktop"
-	}
 
 $BIOSConfiguration = (Get-WmiObject -Class Lenovo_BiosSetting -Namespace root\wmi).CurrentSetting
 
