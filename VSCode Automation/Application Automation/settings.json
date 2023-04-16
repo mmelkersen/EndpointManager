@@ -1,0 +1,42 @@
+{
+
+    "files.exclude": {
+        ".exe": false,
+        ".msi": false,
+        ".editorconfig": true,
+        ".gitattributes": true,
+        ".github": true,
+        "**/Deploy-Application.exe": true,
+        "**/Deploy-Application.exe.config": true,
+        "**/Thumbs.db": true,
+        "AppDeployToolkitLogo.png": true,
+        "CHANGELOG.txt": true,
+        "COPYING.Lesser": true,
+        "LICENSE": true,
+        "mkdocs.yml": true,
+        "PSAppDeployToolkit.pdf": true,
+        "README.md": true,
+        "TODO.txt": true,
+        "wiki": true,
+        "Testing": true,
+        "Sources": true,
+        "material": true,
+        "Examples": true,
+        "docs": true,
+        ".gitignore": true
+    },
+    "terminal.integrated.profiles.windows": {
+        "PowerShell": {
+            "path": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            "source": "PowerShell",
+            "icon": "terminal-powershell",
+            "args":[
+                "-NoLogo", 
+                "-NoExit", 
+                "-ExecutionPolicy", 
+                "RemoteSigned",
+            ]
+        }
+
+
+}
