@@ -1,6 +1,6 @@
 # Azure Log Analytics Key Retrieval Script
 
-![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-blue) ![Azure](https://img.shields.io/badge/Azure-Log%20Analytics-0078D4) ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+![Visitors](https://visitor-badge.laobi.icu/badge?page_id=mmelkersen.EndpointManager.LogAnalytics) ![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-blue) ![Azure](https://img.shields.io/badge/Azure-Log%20Analytics-0078D4) ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 
 ## Overview
 
@@ -51,4 +51,3 @@ The script displays both primary and secondary keys and automatically copies the
 ## Credits
 
 **Author**: Mattias Melkersen  
-**Repository**: [Script-Repository](https://github.com/mmelkersen/Script-Repository)

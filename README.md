@@ -1,4 +1,5 @@
 # EndpointManager
+![Visitors](https://visitor-badge.laobi.icu/badge?page_id=mmelkersen.EndpointManager)
 
 Tools for Endpoint manager both Configuration Manager and Intune
 
