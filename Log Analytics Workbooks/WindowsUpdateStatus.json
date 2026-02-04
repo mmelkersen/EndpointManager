@@ -1,0 +1,364 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "## Windows Update Compliance Dashboard\nOverview of Windows Quality Updates, trends, and detailed device status."
+      },
+      "name": "text - header"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "7785f35d-7e1f-489c-a9d6-dd230b9a124e",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "label": "Time Range",
+            "type": 4,
+            "value": {
+              "durationMs": 2592000000
+            },
+            "typeSettings": {
+              "selectableValues": [
+                {
+                  "durationMs": 604800000
+                },
+                {
+                  "durationMs": 1209600000
+                },
+                {
+                  "durationMs": 2592000000
+                },
+                {
+                  "durationMs": 5184000000
+                },
+                {
+                  "durationMs": 7776000000
+                }
+              ]
+            },
+            "timeContext": {
+              "durationMs": 86400000
+            }
+          },
+          {
+            "id": "5f4e3f2e-1f2e-4f3e-5f6e-7f8e9f0e1f2e",
+            "version": "KqlParameterItem/1.0",
+            "name": "SearchFilter",
+            "label": "Search Device/User",
+            "type": 1,
+            "description": "Search by Device Name, User Name, or Error Code",
+            "value": ""
+          }
+        ],
+        "style": "pills",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "parameters - general"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": "editable",
+        "items": [
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "IntuneDevices\r\n| where OS == \"Windows\"\r\n| where todatetime(LastContact) > {TimeRange:start}\r\n| distinct DeviceId\r\n| summarize count()\r\n| extend Descrption = \"Active Device Count\"\r\n| extend Summary = \"Intune managed devices\"\r\n| project toint(count_), Descrption, Summary",
+              "size": 3,
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "tiles",
+              "tileSettings": {
+                "titleContent": {
+                  "columnMatch": "Descrption",
+                  "formatter": 18,
+                  "formatOptions": {
+                    "thresholdsOptions": "icons",
+                    "thresholdsGrid": [
+                      {
+                        "operator": "Default",
+                        "thresholdValue": null,
+                        "representation": "Monitoring",
+                        "text": "{0}{1}"
+                      }
+                    ]
+                  }
+                },
+                "leftContent": {
+                  "columnMatch": "count_",
+                  "formatter": 12,
+                  "formatOptions": {
+                    "min": 0,
+                    "palette": "green"
+                  },
+                  "numberFormat": {
+                    "unit": 17,
+                    "options": {
+                      "style": "decimal",
+                      "maximumFractionDigits": 2,
+                      "maximumSignificantDigits": 3
+                    }
+                  }
+                },
+                "secondaryContent": {
+                  "columnMatch": "Summary"
+                },
+                "showBorder": false,
+                "size": "auto"
+              }
+            },
+            "name": "Active Device Count"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "UCClient\r\n| where TimeGenerated > {TimeRange:start}\r\n| distinct AzureADDeviceId\r\n| summarize count()\r\n| extend Descrption = \"WUfB Devices\"\r\n| extend Summary = \"Registered devices\"\r\n| project toint(count_), Descrption, Summary",
+              "size": 3,
+              "color": "blue",
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "tiles",
+              "tileSettings": {
+                "titleContent": {
+                  "columnMatch": "Descrption",
+                  "formatter": 18,
+                  "formatOptions": {
+                    "thresholdsOptions": "icons",
+                    "thresholdsGrid": [
+                      {
+                        "operator": "Default",
+                        "thresholdValue": null,
+                        "representation": "CloudUpload",
+                        "text": "{0}{1}"
+                      }
+                    ]
+                  }
+                },
+                "leftContent": {
+                  "columnMatch": "count_",
+                  "formatter": 12,
+                  "formatOptions": {
+                    "palette": "none"
+                  },
+                  "numberFormat": {
+                    "unit": 17,
+                    "options": {
+                      "style": "decimal",
+                      "maximumFractionDigits": 2,
+                      "maximumSignificantDigits": 3
+                    }
+                  }
+                },
+                "secondaryContent": {
+                  "columnMatch": "Summary"
+                },
+                "showBorder": false,
+                "size": "auto"
+              }
+            },
+            "name": "Windows Update for Business Devices"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "UCClientUpdateStatus\r\n| where UpdateCategory == \"WindowsQualityUpdate\" and UpdateClassification == \"Security\" and  UpdateReleaseTime > {TimeRange:start}\r\n| summarize arg_max(TimeGenerated, *) by AzureADDeviceId, UpdateReleaseTime\r\n| extend SummaryState = iff((ClientSubstate == \"UpdateInstalled\"),\"Patched\",\"Not Patched\")\r\n| join kind=innerunique \r\n    (IntuneDevices\r\n    | where OS contains \"Windows\"\r\n    | where todatetime(LastContact) > {TimeRange:start}\r\n    | summarize arg_max(TimeGenerated, *) by ReferenceId\r\n    ) on $left.AzureADDeviceId == $right.ReferenceId \r\n| summarize count() by SummaryState",
+              "size": 3,
+              "title": "Patch Compliance (Recent)",
+              "timeContextFromParameter": "TimeRange",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "visualization": "piechart",
+              "chartSettings": {
+                "seriesLabelSettings": [
+                  {
+                    "seriesName": "Not Patched",
+                    "color": "red"
+                  },
+                  {
+                    "seriesName": "Patched",
+                    "color": "green"
+                  }
+                ]
+              }
+            },
+            "name": "Graph - Patch Compliance"
+          }
+        ]
+      },
+      "name": "Summary Group"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "UCClient\r\n| project TimeGenerated, AzureADDeviceId, OSSecurityUpdateStatus\r\n| extend TimeRounded = bin(TimeGenerated, 1d)\r\n| summarize arg_max(TimeRounded, *) by TimeRounded,AzureADDeviceId, OSSecurityUpdateStatus\r\n| summarize ComputerCount = dcount(AzureADDeviceId,4) by TimeGenerated, OSSecurityUpdateStatus",
+        "size": 0,
+        "aggregation": 5,
+        "title": "Quality Update Patch Trend",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "areachart",
+        "chartSettings": {
+          "xAxis": "TimeGenerated",
+          "yAxis": [
+            "ComputerCount"
+          ],
+          "seriesLabelSettings": [
+            {
+              "seriesName": "Up-to-date",
+              "label": "Fully Patched",
+              "color": "green"
+            },
+            {
+              "seriesName": "Not Up-to-date",
+              "color": "red"
+            },
+            {
+              "seriesName": "NotLatest",
+              "label": "Not Fully Patched",
+              "color": "orange"
+            },
+            {
+              "seriesName": "MultipleSecurityUpdatesMissing",
+              "label": "Missing Multiple Patches",
+              "color": "redBright"
+            },
+            {
+              "seriesName": "Latest",
+              "color": "green"
+            }
+          ],
+          "showDataPoints": true
+        }
+      },
+      "name": "Quality Update Patch Trend"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let ErrorMapping = datatable(ErrorSymName:string, FriendlyDescription:string, RecommendedAction:string) [\r\n    \"ERROR_GEN_FAILURE\", \"Generic failure (often temporary)\", \"Restart device and retry. If persistent, clean SoftwareDistribution folder.\",\r\n    \"E_ACCESSDENIED\", \"Access denied (0x80070005)\", \"Check Antivirus exclusions or Group Policies blocking access.\",\r\n    \"WU_E_DM_UPDATEREMOVED\", \"Update removed from catalog\", \"Check if update was superseded or pulled by Microsoft/Admin.\",\r\n    \"ERROR_CANCELLED\", \"Installation cancelled\", \"User likely shut down or cancelled. Retry update.\",\r\n    \"HTTP_E_STATUS_UNEXPECTED_REDIRECTION\", \"Network blocked/redirected\", \"Check Firewall/Proxy whitelisting for Windows Update URLs.\",\r\n    \"CBS_E_SOURCE_MISSING\", \"Corrupt system files (0x800f081f)\", \"Run 'dism /online /cleanup-image /restorehealth'.\",\r\n    \"CBS_E_NEW_SERVICING_STACK_REQUIRED\", \"Missing Servicing Stack\", \"Install the latest SSU (Servicing Stack Update) first.\",\r\n    \"WU_E_UH_POSTREBOOTUNEXPECTEDSTATE\", \"Post-reboot failure\", \"Retry update. Check event logs for specifics.\",\r\n    \"ERROR_FILE_NOT_FOUND\", \"File missing (0x80070002)\", \"Run 'sfc /scannow' to fix system corruption.\",\r\n    \"ERROR_SHARING_VIOLATION\", \"File in use (0x80070020)\", \"Reboot ensuring no other installers run. Check Antivirus.\"\r\n];\r\nUCUpdateAlert\r\n| where TimeGenerated > {TimeRange:start}\r\n| summarize arg_max(TimeGenerated, *) by AzureADDeviceId\r\n| summarize AlertCount = count() by ErrorSymName\r\n| where isnotempty(ErrorSymName)\r\n| join kind=leftouter ErrorMapping on ErrorSymName\r\n| extend Description = coalesce(FriendlyDescription, \"Check vendor documentation\"), Action = coalesce(RecommendedAction, \"Search error code online\")\r\n| project ErrorCode = ErrorSymName, AlertCount, Description, Action\r\n| top 10 by AlertCount desc",
+        "size": 1,
+        "title": "Top Upgrade Errors",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            {
+              "columnMatch": "AlertCount",
+              "formatter": 4,
+              "formatOptions": {
+                "palette": "red"
+              }
+            }
+          ]
+        }
+      },
+      "customWidth": "100",
+      "name": "grid - top errors"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "---"
+      },
+      "name": "text - separator"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let TargetUpdates = UCClientUpdateStatus\r\n| where TimeGenerated > {TimeRange:start}\r\n| where UpdateCategory == \"WindowsQualityUpdate\"\r\n| summarize arg_max(TimeGenerated, *) by AzureADDeviceId;\r\n\r\nlet ClientInfo = UCClient\r\n| summarize arg_max(TimeGenerated, *) by AzureADDeviceId;\r\n\r\nlet IntuneInfo = IntuneDevices\r\n| where todatetime(LastContact) > {TimeRange:start}\r\n| summarize arg_max(TimeGenerated, *) by ReferenceId;\r\n\r\nlet AlertInfo = UCUpdateAlert\r\n| where TimeGenerated > {TimeRange:start}\r\n| summarize arg_max(TimeGenerated, *) by AzureADDeviceId;\r\n\r\nTargetUpdates\r\n| join kind=leftouter (ClientInfo) on AzureADDeviceId\r\n| join kind=leftouter (IntuneInfo) on $left.AzureADDeviceId == $right.ReferenceId\r\n| join kind=leftouter (AlertInfo) on AzureADDeviceId\r\n| extend DeviceKey = coalesce(AzureADDeviceId, ReferenceId)\r\n| project \r\n    DeviceName,\r\n    UserName,\r\n    UserEmail,\r\n    ClientState,\r\n    ClientSubstate,\r\n    OSBuildNumber,\r\n    TargetRevisionNumber,\r\n    ErrorSymName,\r\n    ErrorCode,\r\n    Description,\r\n    Recommendation,\r\n    LastWUScanTime,\r\n    CompliantState,\r\n    Manufacturer,\r\n    Model,\r\n    UpdateCategory\r\n| where isempty(\"{SearchFilter}\") \r\n    or DeviceName contains \"{SearchFilter}\" \r\n    or UserName contains \"{SearchFilter}\" \r\n    or ErrorCode contains \"{SearchFilter}\"\r\n    or ErrorSymName contains \"{SearchFilter}\"",
+        "size": 0,
+        "showAnalytics": true,
+        "title": "Detailed Device List",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "gridSettings": {
+          "formatters": [
+            {
+              "columnMatch": "ClientState",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "icons",
+                "thresholdsGrid": [
+                  {
+                    "operator": "==",
+                    "thresholdValue": "Installed",
+                    "representation": "success",
+                    "text": "Installed"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "Failed",
+                    "representation": "3",
+                    "text": "Failed"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "Cancelled",
+                    "representation": "disabled",
+                    "text": "Cancelled"
+                  },
+                  {
+                    "operator": "Default",
+                    "representation": "info",
+                    "text": "{0}"
+                  }
+                ]
+              }
+            },
+            {
+              "columnMatch": "CompliantState",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "icons",
+                "thresholdsGrid": [
+                  {
+                    "operator": "==",
+                    "thresholdValue": "Compliant",
+                    "representation": "success",
+                    "text": "Compliant"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "NonCompliant",
+                    "representation": "3",
+                    "text": "Non-Compliant"
+                  }
+                ]
+              }
+            }
+          ],
+          "filter": true,
+          "sortBy": [
+            {
+              "itemKey": "ClientState",
+              "sortOrder": 1
+            }
+          ]
+        }
+      },
+      "name": "grid - main details"
+    }
+  ],
+  "fallbackResourceIds": [
+    "Azure Monitor"
+  ]
+}
