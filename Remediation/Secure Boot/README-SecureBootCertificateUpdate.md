@@ -1,0 +1,439 @@
+# Secure Boot Certificate Update - Remediation
+
+## Overview
+
+Microsoft Secure Boot certificates expire in 2026:
+- **June 2026**: Microsoft Corporation KEK CA 2011 and Microsoft Corporation UEFI CA 2011
+- **October 2026**: Microsoft Windows Production PCA 2011
+
+These Remediation scripts manage the full lifecycle of Secure Boot certificate transition -- from initial configuration through to the device actually booting on the new 2023 certificate chain of trust.
+
+> **Key principle (v2.1):** A device is only reported as **COMPLIANT** when `WindowsUEFICA2023Capable = 2`, meaning the 2023 certificate is in the UEFI DB **and** the device is booting from it. Setting the registry opt-in alone is not sufficient.
+>
+> **New in v2.1:** Each detection run writes detailed diagnostic data to a local log file, including TPM status, BitLocker state, Windows Update health, pending reboot indicators, and a full Secure Boot registry dump. Stage-specific **WHY** and **NEXT STEPS** guidance helps IT pros quickly identify root causes without remote access.
+
+## Stage Progression
+
+Every device moves through a series of stages from initial detection to full compliance. The detection script reports the current stage; only Stage 5 exits with code `0` (compliant).
+
+```
++-------------------+     +-------------------+     +---------------------------+
+|    STAGE 0        |     |    STAGE 1        |     |       STAGE 2             |
+| Secure Boot OFF   |     | OptIn NOT SET     |     |  CONFIGURED_AWAITING_     |
+|                   |     |                   |     |       UPDATE              |
+| Action: Enable in |     | Action: Remediate |     | Action: Waiting for       |
+|   BIOS/UEFI       |     |   sets 0x5944     |     |   Windows Update scan     |
+| Exit: 1           |     | Exit: 1           |     | Exit: 1                   |
++-------------------+     +--------+----------+     +------------+--------------+
+        |                          |                              |
+        | (manual)                 | (remediation runs)           | (WU picks up)
+        v                         v                              v
+  Enable Secure Boot       Remediation writes          +---------------------------+
+  then re-detect           MicrosoftUpdateManagedOptIn  |       STAGE 3             |
+                           = 0x5944                     |  CONFIGURED_UPDATE_       |
+                                  |                     |     IN_PROGRESS           |
+                                  |                     | Action: Waiting for       |
+                                  +---->  Stage 2  ---->|   Windows Update          |
+                                                        | Exit: 1                   |
+                                                        +------------+--------------+
+                                                                     |
+                                                                     | (cert applied)
+                                                                     v
+                                                        +---------------------------+
+                                                        |       STAGE 4             |
+                                                        |  CONFIGURED_CA2023_IN_DB  |
+                                                        | CA2023 cert in UEFI DB    |
+                                                        | but not yet booting       |
+                                                        | Action: Reboot device     |
+                                                        | Exit: 1                   |
+                                                        +------------+--------------+
+                                                                     |
+                                                                     | (reboot)
+                                                                     v
+                                                        +---------------------------+
+                                                        |       STAGE 5             |
+                                                        |       COMPLIANT           |
+                                                        | Booting from 2023 signed  |
+                                                        | boot manager              |
+                                                        | Exit: 0                   |
+                                                        +---------------------------+
+```
+
+### Expected Timeline per Device
+
+| Stage | Trigger | Typical Wait Time |
+|-------|---------|-------------------|
+| 0 -> 1 | IT/user enables Secure Boot in BIOS | Manual -- requires physical/remote BIOS access |
+| 1 -> 2 | Remediation script sets `OptIn = 0x5944` | Minutes (next Intune sync cycle) |
+| 2 -> 3 | Windows Update detects available cert updates | Hours to days (next WU scan) |
+| 3 -> 4 | Windows Update applies certificate to UEFI DB | Hours to days (WU processing + reboot) |
+| 4 -> 5 | Device reboots using 2023 signed boot manager | Minutes (next reboot) |
+
+> With Microsoft Autopatch, Stages 2-5 are handled automatically through quality update rings over 2-4 months (February-May 2026).
+
+## Scripts
+
+### Detection Script (v2.1)
+**File**: `Detect-SecureBootCertificateUpdate.ps1`
+
+**Checks**:
+1. Secure Boot enabled status
+2. `MicrosoftUpdateManagedOptIn` registry key (required for automatic updates)
+3. Certificate update progress (`AvailableUpdates`)
+4. Windows UEFI CA 2023 capability status (`WindowsUEFICA2023Capable`)
+5. Device firmware version and attributes
+6. OS version (warns if Windows 10 past end of support)
+
+**Diagnostic Data (v2.1)** -- written to local log file on every detection run:
+7. Last boot time and system uptime
+8. TPM status (present, enabled, activated, spec version)
+9. BitLocker status on OS drive (protection state, encryption status)
+10. Windows Update service health and last scan/install timestamps
+11. Pending reboot detection (CBS, WU, PendingFileRename, PostRebootReporting)
+12. Full Secure Boot registry dump (`Secureboot\*` and `SecureBoot\Servicing\*`)
+13. Stage-specific **WHY** / **NEXT STEPS** analysis per non-compliant stage
+
+**Tiered Compliance Model**:
+
+| Stage | Intune Output | Exit Code | Meaning |
+|-------|---------------|-----------|--------|
+| 0 | `SECURE_BOOT_DISABLED` | 1 | Secure Boot off -- cannot proceed |
+| 1 | `OPTIN_NOT_SET` | 1 | Registry not configured -- triggers remediation |
+| 2 | `CONFIGURED_AWAITING_UPDATE` | 1 | OptIn set, waiting for WU scan |
+| 3 | `CONFIGURED_UPDATE_IN_PROGRESS` | 1 | WU actively applying cert updates |
+| 4 | `CONFIGURED_CA2023_IN_DB` | 1 | Cert in UEFI DB, reboot needed |
+| 5 | `COMPLIANT` | 0 | Booting from 2023 certificate chain |
+
+**Exit Codes**:
+- `0` = Compliant (Stage 5 -- booting from 2023 certificate chain)
+- `1` = Non-compliant (Stages 0-4 -- see output for specific stage)
+
+### Remediation Script (v2.1)
+**File**: `Remediate-SecureBootCertificateUpdate.ps1`
+
+**Actions**:
+1. Verifies Secure Boot is enabled (fails if disabled)
+2. **Idempotency check**: If `MicrosoftUpdateManagedOptIn` is already `0x5944`, outputs `ALREADY_CONFIGURED` with current CA2023 status and exits `0` without re-writing the registry
+3. Creates registry path if missing
+4. Sets `HKLM:\SYSTEM\CurrentControlSet\Control\Secureboot\MicrosoftUpdateManagedOptIn` to `0x5944` (22852 decimal)
+5. Verifies the value was set correctly
+
+**Intune Output Values**:
+
+| Output | Meaning |
+|--------|---------|
+| `ALREADY_CONFIGURED: OptIn 0x5944 already set. CA2023: ...` | No action taken -- registry already correct |
+| `SUCCESS: MicrosoftUpdateManagedOptIn set to 0x5944...` | Registry value written and verified |
+| `FAILED: Secure Boot DISABLED...` | Cannot remediate without Secure Boot |
+| `FAILED: Registry mismatch...` | Write succeeded but verification failed |
+
+**Exit Codes**:
+- `0` = Remediation successful or already configured
+- `1` = Remediation failed
+
+## Deployment to Intune
+
+### Step 1: Create Remediation in Intune
+
+1. Navigate to **Intune** → **Devices** → **Remediations**
+2. Click **+ Create script package**
+3. Configure:
+   - **Name**: Secure Boot Certificate Update - June 2026 Preparation
+   - **Description**: Configures devices to receive Secure Boot certificate updates before June 2026 expiration. Part of CVE-2023-24932 mitigation and certificate lifecycle management.
+   - **Publisher**: Microsoft Endpoint Management Team
+
+### Step 2: Upload Scripts
+
+**Detection script**:
+- File: `Detect-SecureBootCertificateUpdate.ps1`
+- Run in 64-bit PowerShell: **Yes**
+- Run with user context: **No** (requires System context to read all registry keys)
+
+**Remediation script**:
+- File: `Remediate-SecureBootCertificateUpdate.ps1`
+- Run in 64-bit PowerShell: **Yes**
+- Run with user context: **No** (requires System/Admin to set HKLM registry keys)
+
+### Step 3: Configure Assignments
+
+**Recommended Phased Approach**:
+
+**Phase 1 - Pilot (January 2026)**
+- Target: IT test group (50-100 devices)
+- Schedule: Daily
+- Monitor for 1 week
+
+**Phase 2 - Limited Production (February 2026)**
+- Target: 5-10% of production devices per hardware model
+- Schedule: Daily
+- Monitor for 2 weeks
+
+**Phase 3 - Broad Deployment (March 2026)**
+- Target: All eligible devices
+- Schedule: Daily or Twice daily
+- Complete by April 2026 (2 months before expiration)
+
+### Step 4: Configure Schedule
+
+**Recommended Settings**:
+- Run schedule: **Daily** (or **Twice daily** for faster rollout)
+- Re-run remediations: **Yes** (in case manual changes revert the key)
+
+## Microsoft Autopatch Considerations
+
+If your environment uses **Microsoft Autopatch**:
+
+1. **Your remediation sets the opt-in**: Registry key enables Windows-managed updates
+2. **Microsoft Autopatch handles deployment**: Certificate updates delivered through quality update rings (Test → First → Fast → Broad)
+3. **Expected compliance**: 95-98% with minimal manual intervention
+4. **Timeline**: Microsoft will deploy certificates starting February 2026 through quality updates
+
+**Key Benefit**: After your remediation completes, Microsoft Autopatch automatically handles the complex multi-month certificate deployment through its managed update rings.
+
+## Monitoring Compliance
+
+### Intune Remediations Dashboard
+
+Monitor in **Intune** -> **Devices** -> **Remediations** -> **Secure Boot Certificate Update**:
+
+- **Detection without remediation (exit 0)**: Devices at Stage 5 -- fully compliant, booting from 2023 cert chain
+- **Detection with remediation (exit 1)**: Devices at Stages 1-4. The remediation script runs, but:
+  - Stage 1: Writes the registry key (first-time remediation)
+  - Stages 2-4: Outputs `ALREADY_CONFIGURED` and exits 0 without changes -- no unnecessary registry writes
+- **Failed**: Requires investigation (Stage 0 = Secure Boot disabled, or unexpected errors)
+
+### Detection Output by Stage
+
+Filter the **PreRemediationDetectionScriptOutput** column in the Intune export to understand fleet distribution:
+
+| Output prefix | Stage | Action needed |
+|---------------|-------|---------------|
+| `SECURE_BOOT_DISABLED` | 0 | Manual BIOS intervention |
+| `OPTIN_NOT_SET` | 1 | Remediation will auto-configure |
+| `CONFIGURED_AWAITING_UPDATE` | 2 | Wait for Windows Update |
+| `CONFIGURED_UPDATE_IN_PROGRESS` | 3 | Wait for Windows Update |
+| `CONFIGURED_CA2023_IN_DB` | 4 | Reboot device |
+| `COMPLIANT` | 5 | No action -- fully compliant |
+
+### Expected Compliance Rates
+
+**With Microsoft Autopatch** (Stages 2-5 handled by managed update rings):
+
+| Timeframe | Registry Set (Stage 1+) | Fully Compliant (Stage 5) | Notes |
+|-----------|-------------------------|---------------------------|-------|
+| Week 1 | 60-70% | <5% | Registry remediation rolls out |
+| Week 2-3 | 85-90% | 10-20% | WU begins cert deployment |
+| Month 2 | 95-98% | 40-60% | Certs applying through update rings |
+| Month 3-4 | 95-98% | 70-85% | Most devices through WU cycle |
+| Month 5 (May) | 95-98% | 90-95% | Final stragglers |
+| Remaining | -- | 2-5% manual exceptions | Secure Boot disabled, offline, etc. |
+
+**Without Autopatch** (manual Windows Update management):
+
+| Timeframe | Registry Set (Stage 1+) | Fully Compliant (Stage 5) |
+|-----------|-------------------------|---------------------------|
+| Month 1 | 50-65% | <5% |
+| Month 2 | 70-80% | 15-30% |
+| Month 3 | 75-85% | 40-55% |
+| Month 4-5 | 80-90% | 55-75% |
+| Remaining | -- | 15-25% requires intervention |
+
+### Post-Remediation Certificate Deployment Tracking
+
+After remediation, track actual certificate deployment progress:
+
+**Registry Key to Monitor**:
+```powershell
+HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\AvailableUpdates
+```
+
+**Values**:
+- `0x5944` (22852): Not started - All updates pending
+- Other values: In progress
+- `0x4000` (16384): Complete - All certificates applied
+
+**Certificate Status**:
+```powershell
+HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing\WindowsUEFICA2023Capable
+```
+
+**Values**:
+- `0`: Not in DB
+- `1`: In DB
+- `2`: In DB and booting from 2023 signed boot manager
+
+## Local Device Logging (v2.1)
+
+Both scripts write detailed diagnostic data to a shared log file on every run:
+
+**Log file path**:
+```
+C:\ProgramData\Microsoft\IntuneManagementExtension\Logs\SecureBootCertificateUpdate.log
+```
+
+**Log management**:
+- Maximum size: **4 MB** (configurable via `$MaxLogSizeMB`)
+- Rotation: When the log exceeds 4 MB, the current file is renamed to `.log.old` and a new log is started
+- Only one backup is kept (current + `.old`)
+- Log entries are tagged with `[DETECT]` or `[REMEDIATE]` and severity `[INFO]`, `[WARNING]`, `[ERROR]`, `[SUCCESS]`
+
+**Diagnostic data collected per detection run**:
+
+| Category | Data Logged | Purpose |
+|----------|-------------|---------|
+| System | Computer name, PS version, 64-bit check | Script execution context |
+| OS | Windows version, build number | Compatibility verification |
+| Uptime | Last boot time, uptime duration | Reboot tracking for Stage 4 |
+| TPM | Present, enabled, activated, spec version | Hardware security baseline |
+| BitLocker | Protection status, encryption status | Risk assessment for cert transition |
+| Windows Update | Service status, last scan date, last install | WU health for Stages 2-3 |
+| Pending Reboot | CBS, WU, PendingFileRename, PostReboot | Explains why Stage 4 persists |
+| Registry Dump | All values under `Secureboot\` and `Servicing\` | Complete state snapshot |
+| WHY / NEXT STEPS | Stage-specific root cause analysis | Actionable guidance per stage |
+
+**Sample log output** (Stage 4 device):
+```
+2026-02-18 14:30:01 [DETECT] [INFO] ========== DETECTION STARTED ==========
+2026-02-18 14:30:01 [DETECT] [INFO] Script Version: 2.1
+2026-02-18 14:30:01 [DETECT] [INFO] Computer: WS-PC0412 | User: SYSTEM
+2026-02-18 14:30:01 [DETECT] [SUCCESS] Secure Boot is ENABLED
+2026-02-18 14:30:01 [DETECT] [SUCCESS] MicrosoftUpdateManagedOptIn is SET to 0x5944
+2026-02-18 14:30:01 [DETECT] [INFO] WindowsUEFICA2023Capable: In DB (1)
+2026-02-18 14:30:01 [DETECT] [INFO] --- DIAGNOSTIC DATA ---
+2026-02-18 14:30:01 [DETECT] [INFO] OS: Windows 11 Enterprise (Build 26100)
+2026-02-18 14:30:01 [DETECT] [INFO] Last Boot: 2026-02-15 08:12:30 | Uptime: 3d 6h 17m
+2026-02-18 14:30:01 [DETECT] [INFO] TPM: Present | Enabled: True | Spec: 2.0
+2026-02-18 14:30:01 [DETECT] [INFO] BitLocker (C:): Protection=ON | Status=FullyEncrypted
+2026-02-18 14:30:02 [DETECT] [WARNING] BitLocker NOTE: Secure Boot cert changes may trigger recovery key
+2026-02-18 14:30:02 [DETECT] [INFO] Last WU Scan: 2026-02-18 06:00:12 (8h ago)
+2026-02-18 14:30:02 [DETECT] [INFO] Pending Reboot: No pending reboot detected
+2026-02-18 14:30:02 [DETECT] [INFO] --- Stage 4 Analysis ---
+2026-02-18 14:30:02 [DETECT] [INFO]   WHY: CA2023 cert is in UEFI DB but device has not rebooted to use it
+2026-02-18 14:30:02 [DETECT] [WARNING]   NEXT STEPS: Reboot the device to activate the new boot manager
+2026-02-18 14:30:02 [DETECT] [WARNING] Detection Result: NON-COMPLIANT - Stage 4 (exit 1)
+```
+
+**Performance impact**: Diagnostic checks add approximately 0.5-1.2 seconds per detection run. The heaviest check is the Windows Update COM object query (~200-500ms). All checks are local with zero network calls.
+
+## Troubleshooting
+
+### Check the Local Log First (v2.1)
+
+Before remote investigation, review the local diagnostic log:
+
+```powershell
+Get-Content "C:\ProgramData\Microsoft\IntuneManagementExtension\Logs\SecureBootCertificateUpdate.log" -Tail 50
+```
+
+The log contains **WHY** and **NEXT STEPS** for each non-compliant stage, making remote troubleshooting significantly faster.
+
+### Device Shows "Failed" in Intune
+
+**Most Common Cause**: Secure Boot is disabled
+
+**Resolution**:
+1. Check the local log for Stage 0 diagnostics (disk partition style, BIOS info, firmware mode)
+2. Check output for "Secure Boot is DISABLED" message
+3. Enable Secure Boot in BIOS/UEFI firmware (requires user/IT physical access)
+4. Re-run remediation after Secure Boot is enabled
+
+### Secure Boot Enabled But Remediation Still Fails
+
+**Possible Causes**:
+- Registry permissions issue (rare)
+- Anti-malware blocking registry modifications
+- Device in maintenance mode/reboot pending
+
+**Resolution**:
+1. Check the Secure Boot diagnostic log: `C:\ProgramData\Microsoft\IntuneManagementExtension\Logs\SecureBootCertificateUpdate.log`
+2. Review IntuneManagementExtension logs: `C:\ProgramData\Microsoft\IntuneManagementExtension\Logs`
+3. Manually run remediation script as Administrator
+4. Check for any anti-malware exclusions needed
+
+### Registry Key Set But Certificates Not Installing
+
+**This is normal**: After registry key is set, Windows Update must deliver the certificates. This happens automatically through cumulative updates starting February 2026.
+
+**Check the local log (v2.1)** for Windows Update health indicators:
+- `Windows Update Service: Status=Running` -- service is operational
+- `Last WU Scan` -- if >7 days ago, the log raises a warning
+- `Pending Reboot` -- an outstanding reboot may block WU processing
+
+**Check**:
+- Device is receiving Windows Updates normally
+- No update deferrals or paused updates
+- Latest quality updates installed
+
+**Timeline**: Expect certificate deployment to complete over 2-4 months after remediation (February-May 2026)
+
+## Manual Exceptions (2-5% of devices)
+
+**Expected exceptions requiring manual intervention**:
+
+1. **Secure Boot Disabled** (~1-2%)
+   - Cannot remediate via script
+   - Requires manual BIOS access to enable
+   - Create IT ticket workflow for these devices
+
+2. **Firmware Incompatibility** (~0.5-1%)
+   - Specific hardware models with known issues
+   - Check Microsoft KB5025885 for known incompatibilities
+   - May require OEM firmware updates
+
+3. **Offline/Inactive Devices** (~1-2%)
+   - Extended offline periods
+   - Lost/stolen devices still in Intune
+   - Will remediate when reconnected
+
+4. **Specialty Devices** (~0.5-1%)
+   - Kiosk devices with locked configurations
+   - Air-gapped devices
+   - May require custom deployment approach
+
+## Timeline and Milestones
+
+| Date | Milestone |
+|------|-----------|
+| **January 15, 2026** | Scripts created and tested |
+| **January 2026** | Pilot deployment (IT test group) |
+| **February 2026** | Limited production rollout |
+| **March 2026** | Broad deployment begins |
+| **April 2026** | Target 95%+ remediation compliance |
+| **February-May 2026** | Microsoft Autopatch deploys certificates via quality updates |
+| **May 2026** | Final compliance check before expiration |
+| **June 2026** | ⚠️ Certificate expiration deadline |
+| **October 2026** | ⚠️ Windows Production PCA 2011 expiration |
+
+## Success Criteria
+
+**Remediation Phase (January-April 2026)** -- Stages 0-1:
+- 95%+ devices past Stage 1 (registry configured)
+- <2% devices stuck at Stage 0 (Secure Boot disabled, documented exceptions)
+- Clear exception list for manual follow-up
+
+**Certificate Deployment Phase (February-June 2026)** -- Stages 2-5:
+- Track stage distribution weekly via Intune export
+- 95%+ devices at Stage 5 (`WindowsUEFICA2023Capable = 2`) before June 2026
+- Devices at Stage 4 should be prioritized for reboot
+- Devices stuck at Stage 2/3 for >30 days should be investigated for WU issues
+
+## Additional Resources
+
+- **Microsoft Landing Page**: https://aka.ms/getsecureboot
+- **Blog Post**: https://techcommunity.microsoft.com/blog/windows-itpro-blog/act-now-secure-boot-certificates-expire-in-june-2026/4426856
+- **Enterprise Deployment Guide**: https://support.microsoft.com/topic/enterprise-deployment-guidance-for-cve-2023-24932-88b8f034-20b7-4a45-80cb-c6049b0f9967
+- **Known Issues**: https://support.microsoft.com/topic/41a975df-beb2-40c1-99a3-b3ff139f832d
+- **Windows Secure Boot certificate expiration and CA updates**: https://support.microsoft.com/en-us/topic/windows-secure-boot-certificate-expiration-and-ca-updates-7ff40d33-95dc-4c3c-8725-a9b95457578e
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 2.1 | 2026-02-18 | Enhanced local device logging with full diagnostic data (TPM, BitLocker, WU health, pending reboot, registry dump). Stage-specific WHY/NEXT STEPS analysis in log output. Remediation `ALREADY_CONFIGURED` path now logs `AvailableUpdates`, CA2023 progress, and last boot time. Performance impact: ~0.5-1.2s added per detection run. |
+| 2.0 | 2026-02-18 | Tiered compliance model (exit 0 only at Stage 5). `Get-WmiObject` replaced with `Get-CimInstance`. Idempotent remediation (skips write if already configured). Updated Intune output format with stage identifiers. |
+| 1.0 | 2026-01-15 | Initial release - Detection and remediation scripts created |
+
+---
+
+**Author**: Mattias Melkersen  
+**Last Updated**: February 18, 2026
