@@ -18,6 +18,11 @@
     A device is only considered compliant when WindowsUEFICA2023Capable equals 2,
     meaning the 2023 certificate is in the UEFI DB AND the device is booting from it.
     
+    Fallback Timer: If a device has been opted in for more than FallbackDays days
+    without reaching compliance, the detection output indicates that the fallback
+    timer is active. The companion remediation script will then use the direct
+    AvailableUpdates method (KB5025885) instead of waiting for Windows Update.
+    
     Each detection run logs detailed diagnostic data locally including system uptime,
     TPM status, BitLocker state, Windows Update health, pending reboots, and a full
     Secure Boot registry dump. Stage-specific analysis explains WHY a device is
@@ -27,18 +32,35 @@
     - 0: Compliant (booting from 2023 certificate chain)
     - 1: Non-compliant (requires remediation or waiting for Windows Update)
 
+.PARAMETER FallbackDays
+    Number of days to wait after managed opt-in before the remediation falls back to
+    the direct AvailableUpdates method. Detection output includes fallback countdown.
+    Default: 30
+
+.PARAMETER TimestampRegPath
+    Registry path where the ManagedOptInDate timestamp is stored by the remediation script.
+    Default: HKLM:\SOFTWARE\Mindcore\Secureboot
+
 .EXAMPLE
     .\Detect-SecureBootCertificateUpdate.ps1
     
     Checks the device for Secure Boot certificate update readiness and outputs tiered compliance status.
 
+.EXAMPLE
+    .\Detect-SecureBootCertificateUpdate.ps1 -FallbackDays 45 -TimestampRegPath "HKLM:\SOFTWARE\Contoso\Secureboot"
+    
+    Uses a 45-day fallback threshold and a custom registry path for the opt-in timestamp.
+
 .NOTES
-    Version:        2.2
+    Version:        3.0
     Author:         Mattias Melkersen
     Creation Date:  2026-01-15
     
     CHANGELOG
     ---------------
+    2026-03-27 - v3.0 - Added configurable fallback timer with FallbackDays and TimestampRegPath parameters (MM)
+                        Detection output now includes fallback countdown for non-compliant Stages 2-4
+                        Added Get-FallbackStatus helper function to read ManagedOptInDate timestamp
     2026-02-19 - v2.2 - Fixed misleading "Updates:Not Configured" label when AvailableUpdates=0 (MM)
                         Suppress Updates detail from output when CA2023 cert is already in UEFI DB
     2026-02-18 - v2.1 - Enhanced local device logging with full diagnostic data for IT pro troubleshooting (MM)
@@ -56,7 +78,13 @@
 #>
 
 [CmdletBinding()]
-param()
+param(
+    [Parameter(Mandatory = $false)]
+    [int]$FallbackDays = 30,
+
+    [Parameter(Mandatory = $false)]
+    [string]$TimestampRegPath = "HKLM:\SOFTWARE\Mindcore\Secureboot"
+)
 
 #region Logging Configuration
 [string]$LogFile = "$env:ProgramData\Microsoft\IntuneManagementExtension\Logs\SecureBootCertificateUpdate.log"
@@ -155,12 +183,47 @@ function Get-WindowsUEFICA2023Status {
         default { return "Unknown ($Value)" }
     }
 }
+
+function Get-FallbackStatus {
+    param(
+        [string]$RegPath,
+        [int]$Threshold
+    )
+    
+    $result = @{
+        TimestampExists = $false
+        OptInDate       = $null
+        DaysElapsed     = 0
+        DaysRemaining   = $Threshold
+        IsActive        = $false
+    }
+    
+    try {
+        if (Test-Path $RegPath) {
+            $dateStr = (Get-ItemProperty -Path $RegPath -Name "ManagedOptInDate" -ErrorAction SilentlyContinue).ManagedOptInDate
+            if ($dateStr) {
+                $parsed = [datetime]::Parse($dateStr)
+                $elapsed = ((Get-Date) - $parsed).TotalDays
+                $result.TimestampExists = $true
+                $result.OptInDate = $parsed.ToString("yyyy-MM-dd HH:mm:ss")
+                $result.DaysElapsed = [math]::Floor($elapsed)
+                $result.DaysRemaining = [math]::Max(0, $Threshold - [math]::Floor($elapsed))
+                $result.IsActive = ($elapsed -ge $Threshold)
+            }
+        }
+    }
+    catch {
+        # If timestamp cannot be read, fallback is not active
+    }
+    
+    return $result
+}
 #endregion
 
 #region Main Detection Logic
 try {
     Write-Log -Message "========== DETECTION STARTED ==========" -Level "INFO"
-    Write-Log -Message "Script Version: 2.2" -Level "INFO"
+    Write-Log -Message "Script Version: 3.0" -Level "INFO"
     Write-Log -Message "Computer: $env:COMPUTERNAME | User: $env:USERNAME" -Level "INFO"
     Write-Log -Message "PowerShell: $($PSVersionTable.PSVersion) | Process: $(if ([Environment]::Is64BitProcess) {'64-bit'} else {'32-bit'})" -Level "INFO"
     
@@ -241,6 +304,15 @@ try {
         exit 1
     }
     Write-Log -Message "MicrosoftUpdateManagedOptIn is SET to 0x$($optInValue.ToString('X')) ($optInValue)" -Level "SUCCESS"
+    
+    # Check fallback timer status
+    $fallback = Get-FallbackStatus -RegPath $TimestampRegPath -Threshold $FallbackDays
+    if ($fallback.TimestampExists) {
+        Write-Log -Message "Fallback Timer: OptIn date=$($fallback.OptInDate) | Elapsed=$($fallback.DaysElapsed)d | Threshold=$($FallbackDays)d | Remaining=$($fallback.DaysRemaining)d | Active=$($fallback.IsActive)" -Level "INFO"
+    }
+    else {
+        Write-Log -Message "Fallback Timer: No ManagedOptInDate timestamp found (will be set by remediation script)" -Level "INFO"
+    }
     
     # Check certificate deployment status
     Write-Log -Message "Checking certificate update deployment status..." -Level "INFO"
@@ -453,7 +525,16 @@ try {
     }
     
     # -- Stages 2-4: Configured but not yet fully transitioned (all exit 1) --
-    # The remediation script will see OptIn is already set and skip re-writing it.
+    # The remediation script will see OptIn is already set and may trigger direct fallback.
+    # Add fallback timer info to detail string for non-compliant stages
+    if ($fallback.TimestampExists) {
+        if ($fallback.IsActive) {
+            $details += " | Fallback:ACTIVE($($fallback.DaysElapsed)d)"
+        }
+        else {
+            $details += " | Fallback:$($fallback.DaysRemaining)d remaining"
+        }
+    }
     
     # Stage 4: CA2023 cert is in UEFI DB but device hasn't rebooted to use it yet
     if ($ca2023Capable -eq 1) {
@@ -469,6 +550,12 @@ try {
         }
         Write-Log -Message "  NEXT STEPS: Reboot the device. After reboot, the boot manager will use the 2023 certificate chain." -Level "WARNING"
         Write-Log -Message "  NEXT STEPS: If the device has been rebooted recently and is still at Stage 4, check BitLocker recovery key availability." -Level "WARNING"
+        if ($fallback.TimestampExists -and $fallback.IsActive) {
+            Write-Log -Message "  FALLBACK: Timer exceeded ($($fallback.DaysElapsed)d > $($FallbackDays)d) - remediation will use direct method on next run" -Level "WARNING"
+        }
+        elseif ($fallback.TimestampExists) {
+            Write-Log -Message "  FALLBACK: $($fallback.DaysRemaining) days until direct method fallback activates" -Level "INFO"
+        }
         Write-Log -Message "--- End Stage 4 Analysis ---" -Level "INFO"
         Write-Host "CONFIGURED_CA2023_IN_DB | $details | Action: Reboot to complete transition"
         Write-Log -Message "Detection Result: NON-COMPLIANT - Stage 4 (exit 1)" -Level "WARNING"
@@ -487,6 +574,12 @@ try {
         }
         Write-Log -Message "  NEXT STEPS: Allow Windows Update to complete. This typically resolves after 1-2 quality update cycles." -Level "INFO"
         Write-Log -Message "  NEXT STEPS: If stuck here for >30 days, check Windows Update health and run 'usoclient StartScan'" -Level "WARNING"
+        if ($fallback.TimestampExists -and $fallback.IsActive) {
+            Write-Log -Message "  FALLBACK: Timer exceeded ($($fallback.DaysElapsed)d > $($FallbackDays)d) - remediation will use direct method on next run" -Level "WARNING"
+        }
+        elseif ($fallback.TimestampExists) {
+            Write-Log -Message "  FALLBACK: $($fallback.DaysRemaining) days until direct method fallback activates" -Level "INFO"
+        }
         Write-Log -Message "--- End Stage 3 Analysis ---" -Level "INFO"
         Write-Host "CONFIGURED_UPDATE_IN_PROGRESS | $details | Action: Waiting for Windows Update"
         Write-Log -Message "Detection Result: NON-COMPLIANT - Stage 3 (exit 1)" -Level "WARNING"
@@ -512,6 +605,12 @@ try {
     Write-Log -Message "  NEXT STEPS: Ensure device is connected to the internet and Windows Update service is running" -Level "INFO"
     Write-Log -Message "  NEXT STEPS: Certificate updates are delivered through cumulative quality updates" -Level "INFO"
     Write-Log -Message "  NEXT STEPS: If stuck here for >14 days, run 'usoclient StartScan' or check WU policy/WSUS configuration" -Level "WARNING"
+    if ($fallback.TimestampExists -and $fallback.IsActive) {
+        Write-Log -Message "  FALLBACK: Timer exceeded ($($fallback.DaysElapsed)d > $($FallbackDays)d) - remediation will use direct method on next run" -Level "WARNING"
+    }
+    elseif ($fallback.TimestampExists) {
+        Write-Log -Message "  FALLBACK: $($fallback.DaysRemaining) days until direct method fallback activates" -Level "INFO"
+    }
     Write-Log -Message "--- End Stage 2 Analysis ---" -Level "INFO"
     Write-Host "CONFIGURED_AWAITING_UPDATE | $details | Action: Waiting for Windows Update scan"
     Write-Log -Message "Detection Result: NON-COMPLIANT - Stage 2 (exit 1)" -Level "WARNING"

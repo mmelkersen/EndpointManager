@@ -12,26 +12,49 @@
     - Creates the Secureboot registry path if it doesn't exist
     - Sets MicrosoftUpdateManagedOptIn to 0x5944 (22852 decimal)
     - Verifies the registry value was set correctly
+    - Writes a ManagedOptInDate timestamp for fallback timer tracking
     - Outputs detailed status for Intune logging
     
     After remediation, Windows Update will automatically apply certificate updates through cumulative updates.
     
+    Fallback Timer: If the device has been opted in for more than FallbackDays days without
+    reaching full compliance (WindowsUEFICA2023Capable = 2), the script automatically falls
+    back to the direct AvailableUpdates method (KB5025885 Mitigation 1+2) by setting
+    AvailableUpdates and triggering the Secure-Boot-Update scheduled task.
+    
     Exit codes:
     - 0: Remediation successful (or already configured)
     - 1: Remediation failed
+
+.PARAMETER FallbackDays
+    Number of days to wait after managed opt-in before falling back to the direct
+    AvailableUpdates method if the device has not reached compliance. Default: 30
+
+.PARAMETER TimestampRegPath
+    Registry path where the ManagedOptInDate timestamp is stored.
+    Default: HKLM:\SOFTWARE\Mindcore\Secureboot
 
 .EXAMPLE
     .\Remediate-SecureBootCertificateUpdate.ps1
     
     Configures the device to receive Secure Boot certificate updates and verifies the configuration.
 
+.EXAMPLE
+    .\Remediate-SecureBootCertificateUpdate.ps1 -FallbackDays 45 -TimestampRegPath "HKLM:\SOFTWARE\Contoso\Secureboot"
+    
+    Uses a 45-day fallback threshold and a custom registry path for the opt-in timestamp.
+
 .NOTES
-    Version:        2.1
+    Version:        3.0
     Author:         Mattias Melkersen
     Creation Date:  2026-01-15
     
     CHANGELOG
     ---------------
+    2026-03-27 - v3.0 - Added configurable fallback timer with FallbackDays and TimestampRegPath parameters (MM)
+                        When opt-in has been active for FallbackDays without compliance, triggers direct method
+                        Writes ManagedOptInDate timestamp on first opt-in for fallback tracking
+                        Backfills timestamp if missing on already-configured devices
     2026-02-18 - v2.1 - Enhanced logging in ALREADY_CONFIGURED path with cert progress and last boot time (MM)
     2026-02-18 - v2.0 - Made idempotent: skip registry write if OptIn already set correctly (MM)
                         Added CA2023 status to remediation output for progress tracking
@@ -49,7 +72,13 @@
 #>
 
 [CmdletBinding()]
-param()
+param(
+    [Parameter(Mandatory = $false)]
+    [int]$FallbackDays = 30,
+
+    [Parameter(Mandatory = $false)]
+    [string]$TimestampRegPath = "HKLM:\SOFTWARE\Mindcore\Secureboot"
+)
 
 #region Logging Configuration
 [string]$LogFile = "$env:ProgramData\Microsoft\IntuneManagementExtension\Logs\SecureBootCertificateUpdate.log"
@@ -131,7 +160,7 @@ function Get-SecureBootStatus {
 #region Main Remediation Logic
 try {
     Write-Log -Message "========== REMEDIATION STARTED ==========" -Level "INFO"
-    Write-Log -Message "Script Version: 2.1" -Level "INFO"
+    Write-Log -Message "Script Version: 3.0" -Level "INFO"
     Write-Log -Message "Computer: $env:COMPUTERNAME | User: $env:USERNAME" -Level "INFO"
     Write-Log -Message "PowerShell: $($PSVersionTable.PSVersion) | Process: $(if ([Environment]::Is64BitProcess) {'64-bit'} else {'32-bit'})" -Level "INFO"
     
@@ -164,9 +193,9 @@ try {
     }
     
     if ($existingValue -eq $regValue) {
-        Write-Log -Message "MicrosoftUpdateManagedOptIn already set to 0x$($regValue.ToString('X')) - No action needed" -Level "SUCCESS"
+        Write-Log -Message "MicrosoftUpdateManagedOptIn already set to 0x$($regValue.ToString('X'))" -Level "SUCCESS"
         
-        # Collect certificate deployment progress for local diagnostic logging
+        # Collect certificate deployment progress
         $servicingPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing"
         $ca2023Capable = (Get-ItemProperty -Path $servicingPath -Name "WindowsUEFICA2023Capable" -ErrorAction SilentlyContinue).WindowsUEFICA2023Capable
         $ca2023Text = switch ($ca2023Capable) {
@@ -193,10 +222,148 @@ try {
         catch {}
         Write-Log -Message "--- End Idempotency Check ---" -Level "INFO"
         
-        Write-Host "ALREADY_CONFIGURED: OptIn 0x$($regValue.ToString('X')) already set. CA2023: $ca2023Text"
-        Write-Log -Message "Remediation Result: ALREADY_CONFIGURED (exit 0)" -Level "SUCCESS"
-        Write-Log -Message "========== REMEDIATION COMPLETED ==========" -Level "INFO"
-        exit 0
+        # If already fully compliant, exit immediately
+        if ($ca2023Capable -eq 2) {
+            Write-Host "ALREADY_CONFIGURED: OptIn 0x$($regValue.ToString('X')) already set. CA2023: $ca2023Text"
+            Write-Log -Message "Remediation Result: ALREADY_CONFIGURED (exit 0)" -Level "SUCCESS"
+            Write-Log -Message "========== REMEDIATION COMPLETED ==========" -Level "INFO"
+            exit 0
+        }
+        
+        # Not yet compliant - check fallback timer
+        Write-Log -Message "--- Fallback Timer Check ---" -Level "INFO"
+        $optInDateStr = $null
+        if (Test-Path $TimestampRegPath) {
+            $optInDateStr = (Get-ItemProperty -Path $TimestampRegPath -Name "ManagedOptInDate" -ErrorAction SilentlyContinue).ManagedOptInDate
+        }
+        
+        if (-not $optInDateStr) {
+            # Backfill timestamp for devices that were opted in before v3.0
+            Write-Log -Message "  ManagedOptInDate not found - backfilling timestamp (clock starts now)" -Level "WARNING"
+            try {
+                if (-not (Test-Path $TimestampRegPath)) {
+                    New-Item -Path $TimestampRegPath -Force | Out-Null
+                }
+                $backfillDate = (Get-Date).ToString("o")
+                Set-ItemProperty -Path $TimestampRegPath -Name "ManagedOptInDate" -Value $backfillDate -Type String -Force
+                Write-Log -Message "  ManagedOptInDate backfilled: $backfillDate" -Level "INFO"
+            }
+            catch {
+                Write-Log -Message "  WARNING: Could not backfill ManagedOptInDate: $($_.Exception.Message)" -Level "WARNING"
+            }
+            Write-Log -Message "--- End Fallback Timer Check ---" -Level "INFO"
+            Write-Host "ALREADY_CONFIGURED: OptIn 0x$($regValue.ToString('X')) already set. CA2023: $ca2023Text. Fallback timer started."
+            Write-Log -Message "Remediation Result: ALREADY_CONFIGURED (exit 0)" -Level "SUCCESS"
+            Write-Log -Message "========== REMEDIATION COMPLETED ==========" -Level "INFO"
+            exit 0
+        }
+        
+        # Timestamp exists - calculate elapsed days
+        $optInDate = [datetime]::Parse($optInDateStr)
+        $daysElapsed = [math]::Floor(((Get-Date) - $optInDate).TotalDays)
+        $daysRemaining = [math]::Max(0, $FallbackDays - $daysElapsed)
+        Write-Log -Message "  ManagedOptInDate: $($optInDate.ToString('yyyy-MM-dd HH:mm:ss'))" -Level "INFO"
+        Write-Log -Message "  Days Elapsed: $daysElapsed | Threshold: $FallbackDays | Remaining: $daysRemaining" -Level "INFO"
+        
+        if ($daysElapsed -lt $FallbackDays) {
+            # Threshold not yet reached
+            Write-Log -Message "  Fallback not yet active - $daysRemaining days remaining" -Level "INFO"
+            Write-Log -Message "--- End Fallback Timer Check ---" -Level "INFO"
+            Write-Host "ALREADY_CONFIGURED: OptIn 0x$($regValue.ToString('X')) already set. CA2023: $ca2023Text. Fallback in $($daysRemaining)d."
+            Write-Log -Message "Remediation Result: ALREADY_CONFIGURED (exit 0)" -Level "SUCCESS"
+            Write-Log -Message "========== REMEDIATION COMPLETED ==========" -Level "INFO"
+            exit 0
+        }
+        
+        # --- FALLBACK: Direct method (KB5025885 Mitigation 1+2) ---
+        Write-Log -Message "--- FALLBACK: Activating direct method (KB5025885) ---" -Level "WARNING"
+        Write-Log -Message "  Managed opt-in has been active for $daysElapsed days (threshold: $FallbackDays days)" -Level "WARNING"
+        Write-Log -Message "  CA2023Capable: $ca2023Capable ($ca2023Text) - switching to direct AvailableUpdates method" -Level "WARNING"
+        
+        # Check scheduled task prerequisite
+        $task = Get-ScheduledTask -TaskPath "\Microsoft\Windows\PI\" -TaskName "Secure-Boot-Update" -ErrorAction SilentlyContinue
+        if (-not $task) {
+            Write-Log -Message "  FALLBACK BLOCKED: Scheduled task '\Microsoft\Windows\PI\Secure-Boot-Update' not found" -Level "ERROR"
+            Write-Log -Message "  The required Windows Update (July 2024+) may not be installed" -Level "ERROR"
+            Write-Log -Message "--- End Fallback ---" -Level "INFO"
+            Write-Host "FALLBACK_BLOCKED: Scheduled task not found. CA2023: $ca2023Text"
+            Write-Log -Message "Remediation Result: FALLBACK_BLOCKED (exit 1)" -Level "ERROR"
+            Write-Log -Message "========== REMEDIATION COMPLETED ==========" -Level "INFO"
+            exit 1
+        }
+        
+        $fallbackSuccess = $true
+        
+        # Step 1: DB cert (Mitigation 1) - if cert not yet in DB
+        if ($null -eq $ca2023Capable -or $ca2023Capable -lt 1) {
+            Write-Log -Message "  Step 1: Setting AvailableUpdates = 0x40 (DB cert update)" -Level "INFO"
+            try {
+                Set-ItemProperty -Path $regPath -Name "AvailableUpdates" -Value 0x40 -Type DWord -Force -ErrorAction Stop
+                $verifyAU = (Get-ItemProperty -Path $regPath -Name "AvailableUpdates" -ErrorAction Stop).AvailableUpdates
+                if ($verifyAU -eq 0x40) {
+                    Write-Log -Message "  Step 1: AvailableUpdates set to 0x40 - verified" -Level "SUCCESS"
+                }
+                else {
+                    Write-Log -Message "  Step 1: Verification failed (got 0x$($verifyAU.ToString('X')))" -Level "ERROR"
+                    $fallbackSuccess = $false
+                }
+                
+                Write-Log -Message "  Step 1: Triggering scheduled task" -Level "INFO"
+                Start-ScheduledTask -TaskPath "\Microsoft\Windows\PI\" -TaskName "Secure-Boot-Update" -ErrorAction Stop
+                Write-Log -Message "  Step 1: Scheduled task triggered successfully" -Level "SUCCESS"
+                
+                Start-Sleep -Seconds 10
+            }
+            catch {
+                Write-Log -Message "  Step 1 FAILED: $($_.Exception.Message)" -Level "ERROR"
+                $fallbackSuccess = $false
+            }
+        }
+        else {
+            Write-Log -Message "  Step 1: Skipped - CA2023 cert already in DB (CA2023Capable=$ca2023Capable)" -Level "INFO"
+        }
+        
+        # Step 2: Boot manager (Mitigation 2)
+        if ($fallbackSuccess) {
+            Write-Log -Message "  Step 2: Setting AvailableUpdates = 0x100 (boot manager update)" -Level "INFO"
+            try {
+                Set-ItemProperty -Path $regPath -Name "AvailableUpdates" -Value 0x100 -Type DWord -Force -ErrorAction Stop
+                $verifyAU2 = (Get-ItemProperty -Path $regPath -Name "AvailableUpdates" -ErrorAction Stop).AvailableUpdates
+                if ($verifyAU2 -eq 0x100) {
+                    Write-Log -Message "  Step 2: AvailableUpdates set to 0x100 - verified" -Level "SUCCESS"
+                }
+                else {
+                    Write-Log -Message "  Step 2: Verification failed (got 0x$($verifyAU2.ToString('X')))" -Level "ERROR"
+                    $fallbackSuccess = $false
+                }
+                
+                Write-Log -Message "  Step 2: Triggering scheduled task" -Level "INFO"
+                Start-ScheduledTask -TaskPath "\Microsoft\Windows\PI\" -TaskName "Secure-Boot-Update" -ErrorAction Stop
+                Write-Log -Message "  Step 2: Scheduled task triggered successfully" -Level "SUCCESS"
+            }
+            catch {
+                Write-Log -Message "  Step 2 FAILED: $($_.Exception.Message)" -Level "ERROR"
+                $fallbackSuccess = $false
+            }
+        }
+        else {
+            Write-Log -Message "  Step 2: Skipped due to Step 1 failure" -Level "WARNING"
+        }
+        
+        Write-Log -Message "--- End Fallback ---" -Level "INFO"
+        
+        if ($fallbackSuccess) {
+            Write-Host "FALLBACK_APPLIED: Direct method triggered. CA2023 was: $ca2023Text. Reboot may be required."
+            Write-Log -Message "Remediation Result: FALLBACK_APPLIED (exit 0)" -Level "SUCCESS"
+            Write-Log -Message "========== REMEDIATION COMPLETED ==========" -Level "INFO"
+            exit 0
+        }
+        else {
+            Write-Host "FALLBACK_FAILED: Direct method encountered errors. CA2023: $ca2023Text"
+            Write-Log -Message "Remediation Result: FALLBACK_FAILED (exit 1)" -Level "ERROR"
+            Write-Log -Message "========== REMEDIATION COMPLETED ==========" -Level "INFO"
+            exit 1
+        }
     }
     
     Write-Log -Message "Registry Configuration:" -Level "INFO"
@@ -228,6 +395,18 @@ try {
         Write-Log -Message "Registry value verified: 0x$($currentValue.ToString('X')) ($currentValue)" -Level "SUCCESS"
         Write-Log -Message "Device is now configured to receive Secure Boot certificate updates" -Level "SUCCESS"
         Write-Log -Message "Windows Update will automatically apply certificate updates through cumulative updates starting early 2026" -Level "INFO"
+        # Write fallback timer timestamp
+        try {
+            if (-not (Test-Path $TimestampRegPath)) {
+                New-Item -Path $TimestampRegPath -Force | Out-Null
+            }
+            $optInDate = (Get-Date).ToString("o")
+            Set-ItemProperty -Path $TimestampRegPath -Name "ManagedOptInDate" -Value $optInDate -Type String -Force
+            Write-Log -Message "Fallback timer started: ManagedOptInDate = $optInDate (threshold: $FallbackDays days)" -Level "INFO"
+        }
+        catch {
+            Write-Log -Message "WARNING: Could not write ManagedOptInDate: $($_.Exception.Message)" -Level "WARNING"
+        }
         Write-Host "SUCCESS: MicrosoftUpdateManagedOptIn set to 0x$($currentValue.ToString('X')). Certificate updates enabled."
         Write-Log -Message "Console Output: SUCCESS: MicrosoftUpdateManagedOptIn set to 0x$($currentValue.ToString('X')). Certificate updates enabled." -Level "SUCCESS"
         Write-Log -Message "Remediation Result: SUCCESS (exit 0)" -Level "SUCCESS"

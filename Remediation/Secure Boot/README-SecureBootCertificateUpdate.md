@@ -10,6 +10,8 @@ These Remediation scripts manage the full lifecycle of Secure Boot certificate t
 
 > **Key principle (v2.1):** A device is only reported as **COMPLIANT** when `WindowsUEFICA2023Capable = 2`, meaning the 2023 certificate is in the UEFI DB **and** the device is booting from it. Setting the registry opt-in alone is not sufficient.
 >
+> **New in v3.0:** Both scripts now accept `FallbackDays` (default: 30) and `TimestampRegPath` (default: `HKLM:\SOFTWARE\Mindcore\Secureboot`) parameters. If a device has been opted in for longer than `FallbackDays` without reaching compliance, the remediation script automatically falls back to the direct `AvailableUpdates` method (KB5025885 Mitigation 1+2), bypassing the Windows Update wait. Detection output includes countdown/status for the fallback timer.
+>
 > **New in v2.1:** Each detection run writes detailed diagnostic data to a local log file, including TPM status, BitLocker state, Windows Update health, pending reboot indicators, and a full Secure Boot registry dump. Stage-specific **WHY** and **NEXT STEPS** guidance helps IT pros quickly identify root causes without remote access.
 
 ## Stage Progression
@@ -73,8 +75,14 @@ Every device moves through a series of stages from initial detection to full com
 
 ## Scripts
 
-### Detection Script (v2.1)
+### Detection Script (v3.0)
 **File**: `Detect-SecureBootCertificateUpdate.ps1`
+
+**Parameters**:
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `FallbackDays` | `30` | Days to wait before fallback activates |
+| `TimestampRegPath` | `HKLM:\SOFTWARE\Mindcore\Secureboot` | Registry path for `ManagedOptInDate` timestamp |
 
 **Checks**:
 1. Secure Boot enabled status
@@ -92,6 +100,7 @@ Every device moves through a series of stages from initial detection to full com
 11. Pending reboot detection (CBS, WU, PendingFileRename, PostRebootReporting)
 12. Full Secure Boot registry dump (`Secureboot\*` and `SecureBoot\Servicing\*`)
 13. Stage-specific **WHY** / **NEXT STEPS** analysis per non-compliant stage
+14. Fallback timer countdown (v3.0) -- days remaining or `ACTIVE` status for Stages 2-4
 
 **Tiered Compliance Model**:
 
@@ -108,21 +117,44 @@ Every device moves through a series of stages from initial detection to full com
 - `0` = Compliant (Stage 5 -- booting from 2023 certificate chain)
 - `1` = Non-compliant (Stages 0-4 -- see output for specific stage)
 
-### Remediation Script (v2.1)
+### Remediation Script (v3.0)
 **File**: `Remediate-SecureBootCertificateUpdate.ps1`
+
+**Parameters**:
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `FallbackDays` | `30` | Days to wait before direct method fallback activates |
+| `TimestampRegPath` | `HKLM:\SOFTWARE\Mindcore\Secureboot` | Registry path for `ManagedOptInDate` timestamp |
 
 **Actions**:
 1. Verifies Secure Boot is enabled (fails if disabled)
-2. **Idempotency check**: If `MicrosoftUpdateManagedOptIn` is already `0x5944`, outputs `ALREADY_CONFIGURED` with current CA2023 status and exits `0` without re-writing the registry
+2. **Idempotency check**: If `MicrosoftUpdateManagedOptIn` is already `0x5944`, checks compliance status:
+   - If `WindowsUEFICA2023Capable = 2`: outputs `ALREADY_CONFIGURED` and exits `0`
+   - If not compliant and no timestamp: backfills `ManagedOptInDate` (clock starts now)
+   - If not compliant and threshold not reached: outputs countdown and exits `0`
+   - If not compliant and `FallbackDays` exceeded: triggers direct method (see below)
 3. Creates registry path if missing
 4. Sets `HKLM:\SYSTEM\CurrentControlSet\Control\Secureboot\MicrosoftUpdateManagedOptIn` to `0x5944` (22852 decimal)
 5. Verifies the value was set correctly
+6. Writes `ManagedOptInDate` timestamp to `TimestampRegPath` for fallback tracking
+
+**Fallback Logic (v3.0)**:
+When the fallback timer exceeds `FallbackDays`:
+1. Checks that `\Microsoft\Windows\PI\Secure-Boot-Update` scheduled task exists
+2. If `WindowsUEFICA2023Capable < 1`: Sets `AvailableUpdates = 0x40` and triggers task (DB cert)
+3. Sets `AvailableUpdates = 0x100` and triggers task (boot manager)
+4. A reboot may be required after fallback completes
 
 **Intune Output Values**:
 
 | Output | Meaning |
 |--------|---------|
 | `ALREADY_CONFIGURED: OptIn 0x5944 already set. CA2023: ...` | No action taken -- registry already correct |
+| `ALREADY_CONFIGURED: ... Fallback timer started.` | Timestamp backfilled for pre-v3.0 device |
+| `ALREADY_CONFIGURED: ... Fallback in Xd.` | Countdown to fallback activation |
+| `FALLBACK_APPLIED: Direct method triggered...` | Direct method triggered after threshold exceeded |
+| `FALLBACK_BLOCKED: Scheduled task not found...` | Required Windows KB not installed for fallback |
+| `FALLBACK_FAILED: Direct method encountered errors...` | Fallback attempted but failed |
 | `SUCCESS: MicrosoftUpdateManagedOptIn set to 0x5944...` | Registry value written and verified |
 | `FAILED: Secure Boot DISABLED...` | Cannot remediate without Secure Boot |
 | `FAILED: Registry mismatch...` | Write succeeded but verification failed |
@@ -294,10 +326,11 @@ C:\ProgramData\Microsoft\IntuneManagementExtension\Logs\SecureBootCertificateUpd
 **Sample log output** (Stage 4 device):
 ```
 2026-02-18 14:30:01 [DETECT] [INFO] ========== DETECTION STARTED ==========
-2026-02-18 14:30:01 [DETECT] [INFO] Script Version: 2.1
+2026-02-18 14:30:01 [DETECT] [INFO] Script Version: 3.0
 2026-02-18 14:30:01 [DETECT] [INFO] Computer: WS-PC0412 | User: SYSTEM
 2026-02-18 14:30:01 [DETECT] [SUCCESS] Secure Boot is ENABLED
 2026-02-18 14:30:01 [DETECT] [SUCCESS] MicrosoftUpdateManagedOptIn is SET to 0x5944
+2026-02-18 14:30:01 [DETECT] [INFO] Fallback Timer: OptIn date=2026-01-20 10:15:00 | Elapsed=29d | Threshold=30d | Remaining=1d | Active=False
 2026-02-18 14:30:01 [DETECT] [INFO] WindowsUEFICA2023Capable: In DB (1)
 2026-02-18 14:30:01 [DETECT] [INFO] --- DIAGNOSTIC DATA ---
 2026-02-18 14:30:01 [DETECT] [INFO] OS: Windows 11 Enterprise (Build 26100)
@@ -314,6 +347,45 @@ C:\ProgramData\Microsoft\IntuneManagementExtension\Logs\SecureBootCertificateUpd
 ```
 
 **Performance impact**: Diagnostic checks add approximately 0.5-1.2 seconds per detection run. The heaviest check is the Windows Update COM object query (~200-500ms). All checks are local with zero network calls.
+
+## Fallback Timer (v3.0)
+
+The fallback timer provides a safety net for devices where Windows Update fails to complete the certificate transition within the expected timeframe.
+
+### How It Works
+
+1. **First opt-in**: When the remediation script sets `MicrosoftUpdateManagedOptIn` for the first time, it writes a `ManagedOptInDate` ISO 8601 timestamp to `HKLM:\SOFTWARE\Mindcore\Secureboot`
+2. **Subsequent runs**: Each remediation run checks:
+   - If the device is already compliant (`WindowsUEFICA2023Capable = 2`) -- exits immediately
+   - If no timestamp exists -- backfills it (clock starts now)
+   - If days elapsed < `FallbackDays` -- reports countdown, exits 0
+   - If days elapsed >= `FallbackDays` -- triggers direct method automatically
+3. **Direct fallback**: Sets `AvailableUpdates` to `0x40` (DB cert) then `0x100` (boot manager) and runs the `\Microsoft\Windows\PI\Secure-Boot-Update` scheduled task
+
+### Registry Values
+
+| Path | Value | Type | Purpose |
+|------|-------|------|---------|
+| `HKLM:\SOFTWARE\Mindcore\Secureboot` | `ManagedOptInDate` | `REG_SZ` | ISO 8601 timestamp of when opt-in was first configured |
+
+### Customizing the Fallback Timer
+
+To change the threshold or registry path, modify the script parameters when deploying via Intune:
+
+```powershell
+# Example: 45-day threshold with custom path
+.\Remediate-SecureBootCertificateUpdate.ps1 -FallbackDays 45 -TimestampRegPath "HKLM:\SOFTWARE\Contoso\Secureboot"
+```
+
+Both the detection and remediation scripts must use the **same** `FallbackDays` and `TimestampRegPath` values for consistent reporting.
+
+### Fallback Outputs
+
+| Output | Exit Code | Meaning |
+|--------|-----------|---------|
+| `FALLBACK_APPLIED` | 0 | Direct method triggered successfully, reboot may be required |
+| `FALLBACK_BLOCKED` | 1 | Scheduled task missing -- required Windows KB not installed |
+| `FALLBACK_FAILED` | 1 | Direct method attempted but encountered errors |
 
 ## Troubleshooting
 
@@ -429,6 +501,7 @@ The log contains **WHY** and **NEXT STEPS** for each non-compliant stage, making
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 3.0 | 2026-03-27 | **Fallback timer**: configurable `FallbackDays`/`TimestampRegPath` parameters. When opt-in exceeds threshold without compliance, automatically triggers direct `AvailableUpdates` method (KB5025885). New outputs: `FALLBACK_APPLIED`, `FALLBACK_BLOCKED`, `FALLBACK_FAILED`. Writes `ManagedOptInDate` timestamp to custom registry path. Backfills timestamp on pre-v3.0 devices. |
 | 2.1 | 2026-02-18 | Enhanced local device logging with full diagnostic data (TPM, BitLocker, WU health, pending reboot, registry dump). Stage-specific WHY/NEXT STEPS analysis in log output. Remediation `ALREADY_CONFIGURED` path now logs `AvailableUpdates`, CA2023 progress, and last boot time. Performance impact: ~0.5-1.2s added per detection run. |
 | 2.0 | 2026-02-18 | Tiered compliance model (exit 0 only at Stage 5). `Get-WmiObject` replaced with `Get-CimInstance`. Idempotent remediation (skips write if already configured). Updated Intune output format with stage identifiers. |
 | 1.0 | 2026-01-15 | Initial release - Detection and remediation scripts created |
@@ -436,4 +509,4 @@ The log contains **WHY** and **NEXT STEPS** for each non-compliant stage, making
 ---
 
 **Author**: Mattias Melkersen  
-**Last Updated**: February 18, 2026
+**Last Updated**: March 27, 2026
