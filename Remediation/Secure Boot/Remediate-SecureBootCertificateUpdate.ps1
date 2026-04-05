@@ -45,12 +45,15 @@
     Uses a 45-day fallback threshold and a custom registry path for the opt-in timestamp.
 
 .NOTES
-    Version:        3.0
+    Version:        3.1
     Author:         Mattias Melkersen
     Creation Date:  2026-01-15
     
     CHANGELOG
     ---------------
+    2026-04-05 - v3.1 - Buffered logging: accumulate entries in List[string], flush to disk once per run (MM)
+                        Added Flush-Log function; Write-Log no longer calls Add-Content on every line
+                        Replaced Start-Sleep -Seconds 10 with task-state polling loop after Step 1 task trigger
     2026-03-27 - v3.0 - Added configurable fallback timer with FallbackDays and TimestampRegPath parameters (MM)
                         When opt-in has been active for FallbackDays without compliance, triggers direct method
                         Writes ManagedOptInDate timestamp on first opt-in for fallback tracking
@@ -84,6 +87,7 @@ param(
 [string]$LogFile = "$env:ProgramData\Microsoft\IntuneManagementExtension\Logs\SecureBootCertificateUpdate.log"
 [string]$ScriptName = "REMEDIATE"
 [int]$MaxLogSizeMB = 4
+$script:LogBuffer = [System.Collections.Generic.List[string]]::new()
 
 function Write-Log {
     param(
@@ -93,40 +97,31 @@ function Write-Log {
         [ValidateSet("INFO", "WARNING", "ERROR", "SUCCESS")]
         [string]$Level = "INFO"
     )
-    
     $TimeStamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $LogEntry = "$TimeStamp [$ScriptName] [$Level] $Message"
-    
+    $script:LogBuffer.Add("$TimeStamp [$ScriptName] [$Level] $Message")
+}
+
+function Flush-Log {
+    if ($script:LogBuffer.Count -eq 0) { return }
     try {
-        # Ensure log directory exists
         $LogDir = Split-Path -Path $LogFile -Parent
         if (-not (Test-Path $LogDir)) {
             New-Item -Path $LogDir -ItemType Directory -Force | Out-Null
         }
-        
-        # Check log file size and rotate if necessary
         if (Test-Path $LogFile) {
             $LogFileSizeMB = (Get-Item $LogFile).Length / 1MB
             if ($LogFileSizeMB -ge $MaxLogSizeMB) {
-                # Rotate log: rename current to .old
                 $BackupLog = "$LogFile.old"
-                
-                # Delete old backup if it exists (keep only N-1)
                 if (Test-Path $BackupLog) {
                     Remove-Item -Path $BackupLog -Force -ErrorAction SilentlyContinue
                 }
-                
-                # Rename current log to backup
                 Rename-Item -Path $LogFile -NewName $BackupLog -Force -ErrorAction SilentlyContinue
-                
-                # Create new log file with rotation notice
-                $RotationMsg = "$TimeStamp [SYSTEM] [INFO] Log rotated - Previous log archived to: $BackupLog"
-                Add-Content -Path $LogFile -Value $RotationMsg -ErrorAction SilentlyContinue
+                $TimeStamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+                $script:LogBuffer.Insert(0, "$TimeStamp [SYSTEM] [INFO] Log rotated - Previous log archived to: $BackupLog")
             }
         }
-        
-        # Write to log file
-        Add-Content -Path $LogFile -Value $LogEntry -ErrorAction SilentlyContinue
+        Add-Content -Path $LogFile -Value $script:LogBuffer.ToArray() -ErrorAction SilentlyContinue
+        $script:LogBuffer.Clear()
     }
     catch {
         # Silently fail if logging doesn't work - don't break script execution
@@ -174,6 +169,7 @@ try {
         Write-Host "FAILED: Secure Boot DISABLED - Enable in BIOS/UEFI manually"
         Write-Log -Message "Remediation Result: FAILED (exit 1)" -Level "ERROR"
         Write-Log -Message "========== REMEDIATION COMPLETED ==========" -Level "INFO"
+        Flush-Log
         exit 1
     }
     else {
@@ -227,6 +223,7 @@ try {
             Write-Host "ALREADY_CONFIGURED: OptIn 0x$($regValue.ToString('X')) already set. CA2023: $ca2023Text"
             Write-Log -Message "Remediation Result: ALREADY_CONFIGURED (exit 0)" -Level "SUCCESS"
             Write-Log -Message "========== REMEDIATION COMPLETED ==========" -Level "INFO"
+            Flush-Log
             exit 0
         }
         
@@ -255,6 +252,7 @@ try {
             Write-Host "ALREADY_CONFIGURED: OptIn 0x$($regValue.ToString('X')) already set. CA2023: $ca2023Text. Fallback timer started."
             Write-Log -Message "Remediation Result: ALREADY_CONFIGURED (exit 0)" -Level "SUCCESS"
             Write-Log -Message "========== REMEDIATION COMPLETED ==========" -Level "INFO"
+            Flush-Log
             exit 0
         }
         
@@ -272,6 +270,7 @@ try {
             Write-Host "ALREADY_CONFIGURED: OptIn 0x$($regValue.ToString('X')) already set. CA2023: $ca2023Text. Fallback in $($daysRemaining)d."
             Write-Log -Message "Remediation Result: ALREADY_CONFIGURED (exit 0)" -Level "SUCCESS"
             Write-Log -Message "========== REMEDIATION COMPLETED ==========" -Level "INFO"
+            Flush-Log
             exit 0
         }
         
@@ -289,6 +288,7 @@ try {
             Write-Host "FALLBACK_BLOCKED: Scheduled task not found. CA2023: $ca2023Text"
             Write-Log -Message "Remediation Result: FALLBACK_BLOCKED (exit 1)" -Level "ERROR"
             Write-Log -Message "========== REMEDIATION COMPLETED ==========" -Level "INFO"
+            Flush-Log
             exit 1
         }
         
@@ -312,7 +312,18 @@ try {
                 Start-ScheduledTask -TaskPath "\Microsoft\Windows\PI\" -TaskName "Secure-Boot-Update" -ErrorAction Stop
                 Write-Log -Message "  Step 1: Scheduled task triggered successfully" -Level "SUCCESS"
                 
-                Start-Sleep -Seconds 10
+                # Poll task completion rather than using a fixed sleep
+                $taskDeadline = (Get-Date).AddSeconds(60)
+                do {
+                    Start-Sleep -Seconds 2
+                    $taskState = (Get-ScheduledTask -TaskPath "\Microsoft\Windows\PI\" -TaskName "Secure-Boot-Update" -ErrorAction SilentlyContinue).State
+                } while ($taskState -eq 'Running' -and (Get-Date) -lt $taskDeadline)
+                if ($taskState -eq 'Running') {
+                    Write-Log -Message "  Step 1: Task still running after 60s timeout - proceeding to Step 2" -Level "WARNING"
+                }
+                else {
+                    Write-Log -Message "  Step 1: Task completed (State: $taskState)" -Level "INFO"
+                }
             }
             catch {
                 Write-Log -Message "  Step 1 FAILED: $($_.Exception.Message)" -Level "ERROR"
@@ -356,12 +367,14 @@ try {
             Write-Host "FALLBACK_APPLIED: Direct method triggered. CA2023 was: $ca2023Text. Reboot may be required."
             Write-Log -Message "Remediation Result: FALLBACK_APPLIED (exit 0)" -Level "SUCCESS"
             Write-Log -Message "========== REMEDIATION COMPLETED ==========" -Level "INFO"
+            Flush-Log
             exit 0
         }
         else {
             Write-Host "FALLBACK_FAILED: Direct method encountered errors. CA2023: $ca2023Text"
             Write-Log -Message "Remediation Result: FALLBACK_FAILED (exit 1)" -Level "ERROR"
             Write-Log -Message "========== REMEDIATION COMPLETED ==========" -Level "INFO"
+            Flush-Log
             exit 1
         }
     }
@@ -419,9 +432,11 @@ try {
         Write-Host "FAILED: Registry mismatch - Expected 0x$($regValue.ToString('X')), Got 0x$($currentValue.ToString('X'))"
         Write-Log -Message "Remediation Result: FAILED (exit 1)" -Level "ERROR"
         Write-Log -Message "========== REMEDIATION COMPLETED ==========" -Level "INFO"
+        Flush-Log
         exit 1
     }
     
+    Flush-Log
     exit 0
 }
 catch {
@@ -430,6 +445,7 @@ catch {
     Write-Host "ERROR: $($_.Exception.Message)"
     Write-Log -Message "Remediation Result: ERROR (exit 1)" -Level "ERROR"
     Write-Log -Message "========== REMEDIATION COMPLETED ==========" -Level "INFO"
+    Flush-Log
     exit 1
 }
 #endregion

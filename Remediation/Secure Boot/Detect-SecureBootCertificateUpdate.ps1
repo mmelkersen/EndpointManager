@@ -52,12 +52,16 @@
     Uses a 45-day fallback threshold and a custom registry path for the opt-in timestamp.
 
 .NOTES
-    Version:        3.0
+    Version:        3.1
     Author:         Mattias Melkersen
     Creation Date:  2026-01-15
     
     CHANGELOG
     ---------------
+    2026-04-05 - v3.1 - Buffered logging: accumulate entries in List[string], flush to disk once per run (MM)
+                        Added Flush-Log function; Write-Log no longer calls Add-Content on every line
+                        Moved Stage 5 compliance check before expensive diagnostic data collection
+                        Compliant devices now exit immediately without querying TPM/BitLocker/WU/reboot
     2026-03-27 - v3.0 - Added configurable fallback timer with FallbackDays and TimestampRegPath parameters (MM)
                         Detection output now includes fallback countdown for non-compliant Stages 2-4
                         Added Get-FallbackStatus helper function to read ManagedOptInDate timestamp
@@ -90,6 +94,7 @@ param(
 [string]$LogFile = "$env:ProgramData\Microsoft\IntuneManagementExtension\Logs\SecureBootCertificateUpdate.log"
 [string]$ScriptName = "DETECT"
 [int]$MaxLogSizeMB = 4
+$script:LogBuffer = [System.Collections.Generic.List[string]]::new()
 
 function Write-Log {
     param(
@@ -99,40 +104,31 @@ function Write-Log {
         [ValidateSet("INFO", "WARNING", "ERROR", "SUCCESS")]
         [string]$Level = "INFO"
     )
-    
     $TimeStamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $LogEntry = "$TimeStamp [$ScriptName] [$Level] $Message"
-    
+    $script:LogBuffer.Add("$TimeStamp [$ScriptName] [$Level] $Message")
+}
+
+function Flush-Log {
+    if ($script:LogBuffer.Count -eq 0) { return }
     try {
-        # Ensure log directory exists
         $LogDir = Split-Path -Path $LogFile -Parent
         if (-not (Test-Path $LogDir)) {
             New-Item -Path $LogDir -ItemType Directory -Force | Out-Null
         }
-        
-        # Check log file size and rotate if necessary
         if (Test-Path $LogFile) {
             $LogFileSizeMB = (Get-Item $LogFile).Length / 1MB
             if ($LogFileSizeMB -ge $MaxLogSizeMB) {
-                # Rotate log: rename current to .old
                 $BackupLog = "$LogFile.old"
-                
-                # Delete old backup if it exists (keep only N-1)
                 if (Test-Path $BackupLog) {
                     Remove-Item -Path $BackupLog -Force -ErrorAction SilentlyContinue
                 }
-                
-                # Rename current log to backup
                 Rename-Item -Path $LogFile -NewName $BackupLog -Force -ErrorAction SilentlyContinue
-                
-                # Create new log file with rotation notice
-                $RotationMsg = "$TimeStamp [SYSTEM] [INFO] Log rotated - Previous log archived to: $BackupLog"
-                Add-Content -Path $LogFile -Value $RotationMsg -ErrorAction SilentlyContinue
+                $TimeStamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+                $script:LogBuffer.Insert(0, "$TimeStamp [SYSTEM] [INFO] Log rotated - Previous log archived to: $BackupLog")
             }
         }
-        
-        # Write to log file
-        Add-Content -Path $LogFile -Value $LogEntry -ErrorAction SilentlyContinue
+        Add-Content -Path $LogFile -Value $script:LogBuffer.ToArray() -ErrorAction SilentlyContinue
+        $script:LogBuffer.Clear()
     }
     catch {
         # Silently fail if logging doesn't work - don't break script execution
@@ -274,6 +270,7 @@ try {
         Write-Host "SECURE_BOOT_DISABLED | Action: Enable Secure Boot in BIOS/UEFI"
         Write-Log -Message "Detection Result: NON-COMPLIANT - Stage 0 (exit 1)" -Level "WARNING"
         Write-Log -Message "========== DETECTION COMPLETED ==========" -Level "INFO"
+        Flush-Log
         exit 1
     }
     Write-Log -Message "Secure Boot is ENABLED" -Level "SUCCESS"
@@ -301,6 +298,7 @@ try {
         Write-Host "OPTIN_NOT_SET | Action: Remediation will configure registry"
         Write-Log -Message "Detection Result: NON-COMPLIANT - Stage 1 (exit 1)" -Level "WARNING"
         Write-Log -Message "========== DETECTION COMPLETED ==========" -Level "INFO"
+        Flush-Log
         exit 1
     }
     Write-Log -Message "MicrosoftUpdateManagedOptIn is SET to 0x$($optInValue.ToString('X')) ($optInValue)" -Level "SUCCESS"
@@ -334,6 +332,34 @@ try {
     }
     else {
         Write-Log -Message "WindowsUEFICA2023Capable: Key not present (normal before Windows Update processes)" -Level "INFO"
+    }
+    
+    # Build detail string for output (lightweight - no diagnostics needed)
+    $detailParts = @("OptIn:0x$($optInValue.ToString('X'))")
+    if ($null -ne $availableUpdates) {
+        $updateStatus = Get-AvailableUpdatesStatus -Value $availableUpdates
+        # Only include Updates detail if cert is not yet in DB (avoids confusion at Stage 4/5)
+        if ($null -eq $ca2023Capable -or $ca2023Capable -lt 1) {
+            $detailParts += "Updates:$updateStatus"
+        }
+    }
+    if ($null -ne $ca2023Capable) {
+        $ca2023Status = Get-WindowsUEFICA2023Status -Value $ca2023Capable
+        $detailParts += "CA2023:$ca2023Status"
+    }
+    $details = $detailParts -join " | "
+    
+    # -- Stage 5: COMPLIANT - Booting from 2023 cert chain --
+    # Check early to skip expensive diagnostic collection on compliant devices
+    if ($ca2023Capable -eq 2) {
+        Write-Log -Message "--- Stage 5: COMPLIANT ---" -Level "SUCCESS"
+        Write-Log -Message "  Device is booting from the 2023-signed boot manager" -Level "SUCCESS"
+        Write-Log -Message "  The Secure Boot certificate transition is complete for this device" -Level "SUCCESS"
+        Write-Host "COMPLIANT | $details"
+        Write-Log -Message "Detection Result: COMPLIANT - Stage 5 (exit 0)" -Level "SUCCESS"
+        Write-Log -Message "========== DETECTION COMPLETED ==========" -Level "INFO"
+        Flush-Log
+        exit 0
     }
     
     # Check device attributes
@@ -498,32 +524,6 @@ try {
     Write-Log -Message "--- End Registry Dump ---" -Level "INFO"
     Write-Log -Message "---------- END DIAGNOSTIC DATA ----------" -Level "INFO"
     
-    # Build detail string for output
-    $detailParts = @("OptIn:0x$($optInValue.ToString('X'))")
-    if ($null -ne $availableUpdates) {
-        $updateStatus = Get-AvailableUpdatesStatus -Value $availableUpdates
-        # Only include Updates detail if cert is not yet in DB (avoids confusion at Stage 4/5)
-        if ($null -eq $ca2023Capable -or $ca2023Capable -lt 1) {
-            $detailParts += "Updates:$updateStatus"
-        }
-    }
-    if ($null -ne $ca2023Capable) {
-        $ca2023Status = Get-WindowsUEFICA2023Status -Value $ca2023Capable
-        $detailParts += "CA2023:$ca2023Status"
-    }
-    $details = $detailParts -join " | "
-    
-    # -- Stage 5: COMPLIANT - Booting from 2023 cert chain --
-    if ($ca2023Capable -eq 2) {
-        Write-Log -Message "--- Stage 5: COMPLIANT ---" -Level "SUCCESS"
-        Write-Log -Message "  Device is booting from the 2023-signed boot manager" -Level "SUCCESS"
-        Write-Log -Message "  The Secure Boot certificate transition is complete for this device" -Level "SUCCESS"
-        Write-Host "COMPLIANT | $details"
-        Write-Log -Message "Detection Result: COMPLIANT - Stage 5 (exit 0)" -Level "SUCCESS"
-        Write-Log -Message "========== DETECTION COMPLETED ==========" -Level "INFO"
-        exit 0
-    }
-    
     # -- Stages 2-4: Configured but not yet fully transitioned (all exit 1) --
     # The remediation script will see OptIn is already set and may trigger direct fallback.
     # Add fallback timer info to detail string for non-compliant stages
@@ -560,6 +560,7 @@ try {
         Write-Host "CONFIGURED_CA2023_IN_DB | $details | Action: Reboot to complete transition"
         Write-Log -Message "Detection Result: NON-COMPLIANT - Stage 4 (exit 1)" -Level "WARNING"
         Write-Log -Message "========== DETECTION COMPLETED ==========" -Level "INFO"
+        Flush-Log
         exit 1
     }
     
@@ -584,6 +585,7 @@ try {
         Write-Host "CONFIGURED_UPDATE_IN_PROGRESS | $details | Action: Waiting for Windows Update"
         Write-Log -Message "Detection Result: NON-COMPLIANT - Stage 3 (exit 1)" -Level "WARNING"
         Write-Log -Message "========== DETECTION COMPLETED ==========" -Level "INFO"
+        Flush-Log
         exit 1
     }
     
@@ -615,6 +617,7 @@ try {
     Write-Host "CONFIGURED_AWAITING_UPDATE | $details | Action: Waiting for Windows Update scan"
     Write-Log -Message "Detection Result: NON-COMPLIANT - Stage 2 (exit 1)" -Level "WARNING"
     Write-Log -Message "========== DETECTION COMPLETED ==========" -Level "INFO"
+    Flush-Log
     exit 1
 }
 catch {
@@ -623,6 +626,7 @@ catch {
     Write-Host "ERROR: $($_.Exception.Message)"
     Write-Log -Message "Detection Result: ERROR (exit 1)" -Level "ERROR"
     Write-Log -Message "========== DETECTION COMPLETED ==========" -Level "INFO"
+    Flush-Log
     exit 1
 }
 #endregion
