@@ -20,7 +20,7 @@ These Remediation scripts manage the full lifecycle of Secure Boot certificate t
 
 Every device moves through a series of stages from initial detection to full compliance. The detection script reports the current stage; only Stage 5 exits with code `0` (compliant).
 
-```
+```text
 +-------------------+     +-------------------+     +---------------------------+
 |    STAGE 0        |     |    STAGE 1        |     |       STAGE 2             |
 | Secure Boot OFF   |     | OptIn NOT SET     |     |  CONFIGURED_AWAITING_     |
@@ -28,39 +28,42 @@ Every device moves through a series of stages from initial detection to full com
 | Action: Enable in |     | Action: Remediate |     | Action: Waiting for       |
 |   BIOS/UEFI       |     |   sets 0x5944     |     |   Windows Update scan     |
 | Exit: 1           |     | Exit: 1           |     | Exit: 1                   |
-+-------------------+     +--------+----------+     +------------+--------------+
++-------------------+     +-------------------+     +---------------------------+
         |                          |                              |
         | (manual)                 | (remediation runs)           | (WU picks up)
-        v                         v                              v
+        v                          v                              v
   Enable Secure Boot       Remediation writes          +---------------------------+
-  then re-detect           MicrosoftUpdateManagedOptIn  |       STAGE 3             |
-                           = 0x5944                     |  CONFIGURED_UPDATE_       |
-                                  |                     |     IN_PROGRESS           |
-                                  |                     | Action: Waiting for       |
-                                  +---->  Stage 2  ---->|   Windows Update          |
-                                                        | Exit: 1                   |
-                                                        +------------+--------------+
-                                                                     |
-                                                                     | (cert applied)
-                                                                     v
-                                                        +---------------------------+
-                                                        |       STAGE 4             |
-                                                        |  CONFIGURED_CA2023_IN_DB  |
-                                                        | CA2023 cert in UEFI DB    |
-                                                        | but not yet booting       |
-                                                        | Action: Reboot device     |
-                                                        | Exit: 1                   |
-                                                        +------------+--------------+
-                                                                     |
-                                                                     | (reboot)
-                                                                     v
-                                                        +---------------------------+
-                                                        |       STAGE 5             |
-                                                        |       COMPLIANT           |
-                                                        | Booting from 2023 signed  |
-                                                        | boot manager              |
-                                                        | Exit: 0                   |
-                                                        +---------------------------+
+  then re-detect           MicrosoftUpdateManagedOptIn |       STAGE 3             |
+                           = 0x5944                    |  CONFIGURED_UPDATE_       |
+                                   |                   |     IN_PROGRESS           |
+                                   |                   | Action: Waiting for       |
+                                   +----> Stage 2 ---->|   Windows Update          |
+                                                       | Exit: 1                   |
+                                                       +---------------------------+
+                                                               |             |
+                                                               |             |
+                                                  (WU applies  |             | (Fallback Timer
+                                                  certificates)|             |  expires. Remediate
+                                                               |             |  forces WinCS or
+                                                               v             v  Legacy Task)
+                                                       +---------------------------+
+                                                       |       STAGE 4             |
+                                                       |  CONFIGURED_CA2023_IN_DB  |
+                                                       | CA2023 cert in UEFI DB    |
+                                                       | but not yet booting       |
+                                                       | Action: Reboot device     |
+                                                       | Exit: 1                   |
+                                                       +---------------------------+
+                                                                    |
+                                                                    | (reboot)
+                                                                    v
+                                                       +---------------------------+
+                                                       |       STAGE 5             |
+                                                       |       COMPLIANT           |
+                                                       | Booting from 2023 signed  |
+                                                       | boot manager              |
+                                                       | Exit: 0                   |
+                                                       +---------------------------+
 ```
 
 ### Expected Timeline per Device
@@ -70,7 +73,7 @@ Every device moves through a series of stages from initial detection to full com
 | 0 -> 1 | IT/user enables Secure Boot in BIOS | Manual -- requires physical/remote BIOS access |
 | 1 -> 2 | Remediation script sets `OptIn = 0x5944` | Minutes (next Intune sync cycle) |
 | 2 -> 3 | Windows Update detects available cert updates | Hours to days (next WU scan) |
-| 3 -> 4 | Windows Update applies certificate to UEFI DB | Hours to days (WU processing + reboot) |
+| 3 -> 4 | Windows Update / Fallback triggers certificate | Hours to days (WU) / Immediate (Fallback) |
 | 4 -> 5 | Device reboots using 2023 signed boot manager | Minutes (next reboot) |
 
 > With Microsoft Autopatch, Stages 2-5 are handled automatically through quality update rings over 2-4 months (February-May 2026).
