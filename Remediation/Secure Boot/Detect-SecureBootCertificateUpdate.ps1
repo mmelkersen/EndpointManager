@@ -52,12 +52,19 @@
     Uses a 45-day fallback threshold and a custom registry path for the opt-in timestamp.
 
 .NOTES
-    Version:        3.1
+    Version:        4.0
     Author:         Mattias Melkersen
     Creation Date:  2026-01-15
     
     CHANGELOG
     ---------------
+    2026-04-06 - v4.0 - Added SecureBootUpdates payload folder validation to diagnose task error 0x80070002 (MM)
+                        Added scheduled task last-run-result inspection (Get-SecureBootTaskStatus helper)
+                        Added UEFICA2023Status registry check written by WinCS
+                        Added WinCsFlags.exe availability detection and /query output capture
+                        Added UEFI DB firmware-level certificate verification via Get-SecureBootUEFI
+                        Added Secure Boot event log harvesting (IDs 1036,1043,1044,1045,1801,1808)
+                        Surfaced payload health, task result, WinCS availability in Write-Host output
     2026-04-05 - v3.1 - Buffered logging: accumulate entries in List[string], flush to disk once per run (MM)
                         Added Flush-Log function; Write-Log no longer calls Add-Content on every line
                         Moved Stage 5 compliance check before expensive diagnostic data collection
@@ -214,12 +221,73 @@ function Get-FallbackStatus {
     
     return $result
 }
+
+function Get-SecureBootPayloadStatus {
+    $payloadPath = "$env:SystemRoot\System32\SecureBootUpdates"
+    $result = @{
+        FolderExists  = $false
+        FileCount     = 0
+        Files         = @()
+        HasBinFiles   = $false
+        IsHealthy     = $false
+    }
+
+    try {
+        if (Test-Path $payloadPath) {
+            $result.FolderExists = $true
+            $files = Get-ChildItem -Path $payloadPath -File -ErrorAction SilentlyContinue
+            if ($files) {
+                $result.FileCount = $files.Count
+                $result.Files = $files | ForEach-Object { "$($_.Name) ($([math]::Round($_.Length / 1KB, 1))KB)" }
+                $result.HasBinFiles = ($files | Where-Object { $_.Extension -eq '.bin' }).Count -gt 0
+                $result.IsHealthy = $result.HasBinFiles
+            }
+        }
+    }
+    catch {
+        # Non-critical - continue without payload info
+    }
+
+    return $result
+}
+
+function Get-SecureBootTaskStatus {
+    $result = @{
+        TaskExists     = $false
+        LastRunTime    = $null
+        LastTaskResult = $null
+        NextRunTime    = $null
+        ResultHex      = $null
+        IsMissingFiles = $false
+    }
+
+    try {
+        $task = Get-ScheduledTask -TaskPath "\Microsoft\Windows\PI\" -TaskName "Secure-Boot-Update" -ErrorAction SilentlyContinue
+        if ($task) {
+            $result.TaskExists = $true
+            $taskInfo = Get-ScheduledTaskInfo -TaskPath "\Microsoft\Windows\PI\" -TaskName "Secure-Boot-Update" -ErrorAction SilentlyContinue
+            if ($taskInfo) {
+                $result.LastRunTime = $taskInfo.LastRunTime
+                $result.LastTaskResult = $taskInfo.LastTaskResult
+                $result.ResultHex = "0x$($taskInfo.LastTaskResult.ToString('X'))"
+                $result.NextRunTime = $taskInfo.NextRunTime
+                # 0x80070002 = ERROR_FILE_NOT_FOUND - missing payload binaries
+                $result.IsMissingFiles = ($taskInfo.LastTaskResult -eq 0x80070002)
+            }
+        }
+    }
+    catch {
+        # Non-critical - continue without task info
+    }
+
+    return $result
+}
 #endregion
 
 #region Main Detection Logic
 try {
     Write-Log -Message "========== DETECTION STARTED ==========" -Level "INFO"
-    Write-Log -Message "Script Version: 3.0" -Level "INFO"
+    Write-Log -Message "Script Version: 4.0" -Level "INFO"
     Write-Log -Message "Computer: $env:COMPUTERNAME | User: $env:USERNAME" -Level "INFO"
     Write-Log -Message "PowerShell: $($PSVersionTable.PSVersion) | Process: $(if ([Environment]::Is64BitProcess) {'64-bit'} else {'32-bit'})" -Level "INFO"
     
@@ -334,6 +402,15 @@ try {
         Write-Log -Message "WindowsUEFICA2023Capable: Key not present (normal before Windows Update processes)" -Level "INFO"
     }
     
+    # Check UEFICA2023Status (written by WinCS when complete)
+    $uefiCA2023Status = (Get-ItemProperty -Path $servicingPath -Name "UEFICA2023Status" -ErrorAction SilentlyContinue).UEFICA2023Status
+    if ($null -ne $uefiCA2023Status) {
+        Write-Log -Message "UEFICA2023Status: $uefiCA2023Status" -Level "INFO"
+    }
+    else {
+        Write-Log -Message "UEFICA2023Status: Key not present (set by WinCS when cert update completes)" -Level "INFO"
+    }
+    
     # Build detail string for output (lightweight - no diagnostics needed)
     $detailParts = @("OptIn:0x$($optInValue.ToString('X'))")
     if ($null -ne $availableUpdates) {
@@ -378,6 +455,111 @@ try {
     
     # ===== DIAGNOSTIC DATA COLLECTION =====
     Write-Log -Message "---------- DIAGNOSTIC DATA ----------" -Level "INFO"
+    
+    # Secure Boot payload folder validation (diagnoses task error 0x80070002)
+    Write-Log -Message "--- SecureBootUpdates Payload Check ---" -Level "INFO"
+    $payload = Get-SecureBootPayloadStatus
+    if ($payload.FolderExists) {
+        Write-Log -Message "  Payload Folder: EXISTS ($env:SystemRoot\System32\SecureBootUpdates)" -Level "INFO"
+        Write-Log -Message "  File Count: $($payload.FileCount)" -Level "INFO"
+        if ($payload.FileCount -gt 0) {
+            foreach ($f in $payload.Files) {
+                Write-Log -Message "  File: $f" -Level "INFO"
+            }
+            if ($payload.HasBinFiles) {
+                Write-Log -Message "  Payload Health: HEALTHY - .bin payload files present" -Level "SUCCESS"
+            }
+            else {
+                Write-Log -Message "  Payload Health: WARNING - folder has files but no .bin payloads" -Level "WARNING"
+            }
+        }
+        else {
+            Write-Log -Message "  Payload Health: EMPTY - no files in payload folder" -Level "WARNING"
+            Write-Log -Message "  This will cause the Secure-Boot-Update task to fail with 0x80070002" -Level "WARNING"
+            Write-Log -Message "  FIX: Install the latest cumulative update, or use WinCsFlags.exe if available" -Level "WARNING"
+        }
+    }
+    else {
+        Write-Log -Message "  Payload Folder: MISSING ($env:SystemRoot\System32\SecureBootUpdates)" -Level "WARNING"
+        Write-Log -Message "  This will cause the Secure-Boot-Update task to fail with 0x80070002" -Level "WARNING"
+        Write-Log -Message "  FIX: Install the latest cumulative update, or use WinCsFlags.exe if available" -Level "WARNING"
+    }
+    Write-Log -Message "--- End Payload Check ---" -Level "INFO"
+    
+    # Scheduled task last-run-result inspection
+    Write-Log -Message "--- Secure-Boot-Update Task Status ---" -Level "INFO"
+    $taskStatus = Get-SecureBootTaskStatus
+    if ($taskStatus.TaskExists) {
+        Write-Log -Message "  Task: Found" -Level "INFO"
+        if ($null -ne $taskStatus.LastRunTime -and $taskStatus.LastRunTime.Year -gt 2000) {
+            Write-Log -Message "  Last Run: $($taskStatus.LastRunTime.ToString('yyyy-MM-dd HH:mm:ss'))" -Level "INFO"
+        }
+        else {
+            Write-Log -Message "  Last Run: Never" -Level "INFO"
+        }
+        Write-Log -Message "  Last Result: $($taskStatus.ResultHex) ($($taskStatus.LastTaskResult))" -Level "INFO"
+        if ($taskStatus.IsMissingFiles) {
+            Write-Log -Message "  ALERT: Task failed with 0x80070002 (ERROR_FILE_NOT_FOUND)" -Level "ERROR"
+            Write-Log -Message "  ROOT CAUSE: Missing certificate payload files in SecureBootUpdates folder" -Level "ERROR"
+            Write-Log -Message "  FIX: Install the latest cumulative update to restore payload files, or use WinCsFlags.exe" -Level "ERROR"
+        }
+        elseif ($taskStatus.LastTaskResult -ne 0) {
+            Write-Log -Message "  WARNING: Task exited with non-zero result $($taskStatus.ResultHex)" -Level "WARNING"
+        }
+        else {
+            Write-Log -Message "  Task result: Success (0x0)" -Level "SUCCESS"
+        }
+        if ($null -ne $taskStatus.NextRunTime -and $taskStatus.NextRunTime.Year -gt 2000) {
+            Write-Log -Message "  Next Run: $($taskStatus.NextRunTime.ToString('yyyy-MM-dd HH:mm:ss'))" -Level "INFO"
+        }
+    }
+    else {
+        Write-Log -Message "  Task: NOT FOUND (requires July 2024+ cumulative update)" -Level "WARNING"
+    }
+    Write-Log -Message "--- End Task Status ---" -Level "INFO"
+    
+    # WinCS (WinCsFlags.exe) availability check
+    Write-Log -Message "--- WinCS Availability ---" -Level "INFO"
+    $winCsPath = "$env:SystemRoot\System32\WinCsFlags.exe"
+    $winCsAvailable = Test-Path $winCsPath
+    if ($winCsAvailable) {
+        Write-Log -Message "  WinCsFlags.exe: AVAILABLE ($winCsPath)" -Level "SUCCESS"
+        try {
+            $winCsOutput = & $winCsPath /query --key F33E0C8E002 2>&1
+            $winCsOutputStr = ($winCsOutput | Out-String).Trim()
+            foreach ($line in ($winCsOutputStr -split "`n")) {
+                $trimmed = $line.Trim()
+                if ($trimmed) {
+                    Write-Log -Message "  WinCS: $trimmed" -Level "INFO"
+                }
+            }
+        }
+        catch {
+            Write-Log -Message "  WinCS query failed: $($_.Exception.Message)" -Level "WARNING"
+        }
+    }
+    else {
+        Write-Log -Message "  WinCsFlags.exe: NOT AVAILABLE (requires Oct/Nov 2025+ cumulative update)" -Level "INFO"
+    }
+    Write-Log -Message "--- End WinCS Availability ---" -Level "INFO"
+    
+    # UEFI DB firmware-level certificate verification
+    Write-Log -Message "--- UEFI DB Certificate Verification ---" -Level "INFO"
+    try {
+        $dbBytes = (Get-SecureBootUEFI db -ErrorAction Stop).bytes
+        $dbContent = [System.Text.Encoding]::ASCII.GetString($dbBytes)
+        $hasCA2023InDB = $dbContent -match 'Windows UEFI CA 2023'
+        if ($hasCA2023InDB) {
+            Write-Log -Message "  UEFI DB: Windows UEFI CA 2023 certificate FOUND in firmware DB" -Level "SUCCESS"
+        }
+        else {
+            Write-Log -Message "  UEFI DB: Windows UEFI CA 2023 certificate NOT FOUND in firmware DB" -Level "INFO"
+        }
+    }
+    catch {
+        Write-Log -Message "  UEFI DB: Unable to query firmware - $($_.Exception.Message)" -Level "WARNING"
+    }
+    Write-Log -Message "--- End UEFI DB Verification ---" -Level "INFO"
     
     # OS version and last boot time
     $osInfo = Get-CimInstance -ClassName Win32_OperatingSystem
@@ -522,11 +704,50 @@ try {
         Write-Log -Message "  SecureBoot\Servicing key does not exist (normal before WU processes cert updates)" -Level "INFO"
     }
     Write-Log -Message "--- End Registry Dump ---" -Level "INFO"
+    
+    # Secure Boot event log harvesting
+    Write-Log -Message "--- Secure Boot Event Log ---" -Level "INFO"
+    $sbEventIds = @(1036, 1043, 1044, 1045, 1801, 1808)
+    try {
+        $sbEvents = Get-WinEvent -FilterHashtable @{
+            LogName = 'Microsoft-Windows-Kernel-Boot/Operational', 'System'
+            Id      = $sbEventIds
+        } -MaxEvents 20 -ErrorAction SilentlyContinue
+        if ($sbEvents -and $sbEvents.Count -gt 0) {
+            $grouped = $sbEvents | Group-Object -Property Id
+            foreach ($group in $grouped) {
+                $latest = $group.Group | Sort-Object TimeCreated -Descending | Select-Object -First 1
+                $msgPreview = ($latest.Message -split "`n")[0]
+                if ($msgPreview.Length -gt 120) { $msgPreview = $msgPreview.Substring(0, 120) + "..." }
+                Write-Log -Message "  Event $($group.Name): Last=$($latest.TimeCreated.ToString('yyyy-MM-dd HH:mm:ss')) Count=$($group.Count) [$msgPreview]" -Level "INFO"
+            }
+        }
+        else {
+            Write-Log -Message "  No Secure Boot events (IDs: $($sbEventIds -join ',')) found in recent logs" -Level "INFO"
+        }
+    }
+    catch {
+        Write-Log -Message "  Event Log query failed: $($_.Exception.Message)" -Level "WARNING"
+    }
+    Write-Log -Message "--- End Event Log ---" -Level "INFO"
+    
     Write-Log -Message "---------- END DIAGNOSTIC DATA ----------" -Level "INFO"
     
     # -- Stages 2-4: Configured but not yet fully transitioned (all exit 1) --
     # The remediation script will see OptIn is already set and may trigger direct fallback.
-    # Add fallback timer info to detail string for non-compliant stages
+    # Add payload, task, WinCS and fallback timer info to detail string for non-compliant stages
+    if (-not $payload.IsHealthy) {
+        $details += " | Payload:MISSING"
+    }
+    if ($taskStatus.TaskExists -and $taskStatus.IsMissingFiles) {
+        $details += " | Task:0x80070002"
+    }
+    elseif ($taskStatus.TaskExists -and $taskStatus.LastTaskResult -eq 0) {
+        $details += " | Task:OK"
+    }
+    if ($winCsAvailable) {
+        $details += " | WinCS:Available"
+    }
     if ($fallback.TimestampExists) {
         if ($fallback.IsActive) {
             $details += " | Fallback:ACTIVE($($fallback.DaysElapsed)d)"

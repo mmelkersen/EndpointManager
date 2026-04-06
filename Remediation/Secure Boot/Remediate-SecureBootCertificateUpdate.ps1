@@ -19,8 +19,11 @@
     
     Fallback Timer: If the device has been opted in for more than FallbackDays days without
     reaching full compliance (WindowsUEFICA2023Capable = 2), the script automatically falls
-    back to the direct AvailableUpdates method (KB5025885 Mitigation 1+2) by setting
-    AvailableUpdates and triggering the Secure-Boot-Update scheduled task.
+    back to a direct method. The preferred fallback is WinCS (WinCsFlags.exe /apply) which
+    bypasses the SecureBootUpdates payload folder entirely. If WinCS is not available, the
+    legacy AvailableUpdates method (KB5025885 Mitigation 1+2) is used, provided the payload
+    files exist in C:\Windows\System32\SecureBootUpdates\. If neither WinCS nor payloads are
+    available, the script exits with an error indicating a cumulative update is needed.
     
     Exit codes:
     - 0: Remediation successful (or already configured)
@@ -45,12 +48,17 @@
     Uses a 45-day fallback threshold and a custom registry path for the opt-in timestamp.
 
 .NOTES
-    Version:        3.1
+    Version:        4.0
     Author:         Mattias Melkersen
     Creation Date:  2026-01-15
     
     CHANGELOG
     ---------------
+    2026-04-06 - v4.0 - WinCS (WinCsFlags.exe /apply) is now the preferred fallback method over AvailableUpdates (MM)
+                        Added SecureBootUpdates payload folder pre-flight validation before task trigger
+                        Legacy AvailableUpdates path retained only when WinCS unavailable and payloads present
+                        Added post-task LastTaskResult validation to detect 0x80070002 in legacy path
+                        Devices without WinCS or payloads now exit 1 with explicit "needs cumulative update" message
     2026-04-05 - v3.1 - Buffered logging: accumulate entries in List[string], flush to disk once per run (MM)
                         Added Flush-Log function; Write-Log no longer calls Add-Content on every line
                         Replaced Start-Sleep -Seconds 10 with task-state polling loop after Step 1 task trigger
@@ -150,12 +158,41 @@ function Get-SecureBootStatus {
     }
     return $false
 }
+
+function Get-SecureBootPayloadStatus {
+    $payloadPath = "$env:SystemRoot\System32\SecureBootUpdates"
+    $result = @{
+        FolderExists  = $false
+        FileCount     = 0
+        Files         = @()
+        HasBinFiles   = $false
+        IsHealthy     = $false
+    }
+
+    try {
+        if (Test-Path $payloadPath) {
+            $result.FolderExists = $true
+            $files = Get-ChildItem -Path $payloadPath -File -ErrorAction SilentlyContinue
+            if ($files) {
+                $result.FileCount = $files.Count
+                $result.Files = $files | ForEach-Object { "$($_.Name) ($([math]::Round($_.Length / 1KB, 1))KB)" }
+                $result.HasBinFiles = ($files | Where-Object { $_.Extension -eq '.bin' }).Count -gt 0
+                $result.IsHealthy = $result.HasBinFiles
+            }
+        }
+    }
+    catch {
+        # Non-critical - continue without payload info
+    }
+
+    return $result
+}
 #endregion
 
 #region Main Remediation Logic
 try {
     Write-Log -Message "========== REMEDIATION STARTED ==========" -Level "INFO"
-    Write-Log -Message "Script Version: 3.0" -Level "INFO"
+    Write-Log -Message "Script Version: 4.0" -Level "INFO"
     Write-Log -Message "Computer: $env:COMPUTERNAME | User: $env:USERNAME" -Level "INFO"
     Write-Log -Message "PowerShell: $($PSVersionTable.PSVersion) | Process: $(if ([Environment]::Is64BitProcess) {'64-bit'} else {'32-bit'})" -Level "INFO"
     
@@ -274,10 +311,75 @@ try {
             exit 0
         }
         
-        # --- FALLBACK: Direct method (KB5025885 Mitigation 1+2) ---
-        Write-Log -Message "--- FALLBACK: Activating direct method (KB5025885) ---" -Level "WARNING"
+        # --- FALLBACK: WinCS preferred, legacy AvailableUpdates as backup ---
+        Write-Log -Message "--- FALLBACK: Activating direct method ---" -Level "WARNING"
         Write-Log -Message "  Managed opt-in has been active for $daysElapsed days (threshold: $FallbackDays days)" -Level "WARNING"
-        Write-Log -Message "  CA2023Capable: $ca2023Capable ($ca2023Text) - switching to direct AvailableUpdates method" -Level "WARNING"
+        Write-Log -Message "  CA2023Capable: $ca2023Capable ($ca2023Text) - switching to direct method" -Level "WARNING"
+        
+        # Check WinCS availability (preferred method - bypasses payload folder dependency)
+        $winCsPath = "$env:SystemRoot\System32\WinCsFlags.exe"
+        $winCsAvailable = Test-Path $winCsPath
+        
+        if ($winCsAvailable) {
+            # --- WinCS path (preferred) ---
+            Write-Log -Message "  WinCsFlags.exe: AVAILABLE - using WinCS method (preferred)" -Level "SUCCESS"
+            try {
+                Write-Log -Message "  Applying WinCS key: WinCsFlags.exe /apply --key F33E0C8E002" -Level "INFO"
+                $winCsOutput = & $winCsPath /apply --key "F33E0C8E002" 2>&1
+                $winCsOutputStr = ($winCsOutput | Out-String).Trim()
+                foreach ($line in ($winCsOutputStr -split "`n")) {
+                    $trimmed = $line.Trim()
+                    if ($trimmed) {
+                        Write-Log -Message "  WinCS: $trimmed" -Level "INFO"
+                    }
+                }
+                # WinCS sets the flags; the Secure-Boot-Update task runs every 12h to process them
+                # Manually trigger the task to expedite
+                $task = Get-ScheduledTask -TaskPath "\Microsoft\Windows\PI\" -TaskName "Secure-Boot-Update" -ErrorAction SilentlyContinue
+                if ($task) {
+                    Write-Log -Message "  Triggering Secure-Boot-Update task to expedite processing" -Level "INFO"
+                    Start-ScheduledTask -TaskPath "\Microsoft\Windows\PI\" -TaskName "Secure-Boot-Update" -ErrorAction SilentlyContinue
+                    Write-Log -Message "  Task triggered successfully" -Level "SUCCESS"
+                }
+                else {
+                    Write-Log -Message "  Secure-Boot-Update task not found - WinCS will process on next TPMTasks cycle" -Level "INFO"
+                }
+                Write-Log -Message "--- End Fallback (WinCS) ---" -Level "INFO"
+                Write-Host "FALLBACK_WINCS: WinCS applied key F33E0C8E002. CA2023 was: $ca2023Text. Reboot required."
+                Write-Log -Message "Remediation Result: FALLBACK_WINCS (exit 0)" -Level "SUCCESS"
+                Write-Log -Message "========== REMEDIATION COMPLETED ==========" -Level "INFO"
+                Flush-Log
+                exit 0
+            }
+            catch {
+                Write-Log -Message "  WinCS apply FAILED: $($_.Exception.Message)" -Level "ERROR"
+                Write-Log -Message "  Falling through to legacy AvailableUpdates method" -Level "WARNING"
+            }
+        }
+        else {
+            Write-Log -Message "  WinCsFlags.exe: NOT AVAILABLE (requires Oct/Nov 2025+ cumulative update)" -Level "INFO"
+        }
+        
+        # --- Legacy path: AvailableUpdates + scheduled task ---
+        # Pre-flight: check payload folder
+        $payload = Get-SecureBootPayloadStatus
+        if (-not $payload.IsHealthy) {
+            $payloadDetail = if ($payload.FolderExists) { "folder exists but empty" } else { "folder missing" }
+            Write-Log -Message "  Payload Pre-flight: FAILED ($payloadDetail)" -Level "ERROR"
+            Write-Log -Message "  SecureBootUpdates folder has no .bin payload files" -Level "ERROR"
+            Write-Log -Message "  The Secure-Boot-Update task will fail with 0x80070002 without these files" -Level "ERROR"
+            if (-not $winCsAvailable) {
+                Write-Log -Message "  Neither WinCS nor payload files are available on this device" -Level "ERROR"
+                Write-Log -Message "  ACTION: Install the latest cumulative update to get WinCsFlags.exe or payload files" -Level "ERROR"
+            }
+            Write-Log -Message "--- End Fallback (No Method Available) ---" -Level "INFO"
+            Write-Host "FALLBACK_BLOCKED: No WinCS and no payload files. Install latest cumulative update. CA2023: $ca2023Text"
+            Write-Log -Message "Remediation Result: FALLBACK_BLOCKED (exit 1)" -Level "ERROR"
+            Write-Log -Message "========== REMEDIATION COMPLETED ==========" -Level "INFO"
+            Flush-Log
+            exit 1
+        }
+        Write-Log -Message "  Payload Pre-flight: PASSED ($($payload.FileCount) files, .bin present)" -Level "SUCCESS"
         
         # Check scheduled task prerequisite
         $task = Get-ScheduledTask -TaskPath "\Microsoft\Windows\PI\" -TaskName "Secure-Boot-Update" -ErrorAction SilentlyContinue
@@ -292,6 +394,7 @@ try {
             exit 1
         }
         
+        Write-Log -Message "  Using legacy AvailableUpdates + scheduled task method (KB5025885)" -Level "INFO"
         $fallbackSuccess = $true
         
         # Step 1: DB cert (Mitigation 1) - if cert not yet in DB
@@ -323,6 +426,16 @@ try {
                 }
                 else {
                     Write-Log -Message "  Step 1: Task completed (State: $taskState)" -Level "INFO"
+                    # Post-task result validation
+                    $step1Info = Get-ScheduledTaskInfo -TaskPath "\Microsoft\Windows\PI\" -TaskName "Secure-Boot-Update" -ErrorAction SilentlyContinue
+                    if ($step1Info -and $step1Info.LastTaskResult -eq 0x80070002) {
+                        Write-Log -Message "  Step 1: Task failed with 0x80070002 (ERROR_FILE_NOT_FOUND)" -Level "ERROR"
+                        Write-Log -Message "  ROOT CAUSE: Payload files missing despite pre-flight check passing (possible race condition)" -Level "ERROR"
+                        $fallbackSuccess = $false
+                    }
+                    elseif ($step1Info -and $step1Info.LastTaskResult -ne 0) {
+                        Write-Log -Message "  Step 1: Task returned non-zero result: 0x$($step1Info.LastTaskResult.ToString('X'))" -Level "WARNING"
+                    }
                 }
             }
             catch {
@@ -351,6 +464,24 @@ try {
                 Write-Log -Message "  Step 2: Triggering scheduled task" -Level "INFO"
                 Start-ScheduledTask -TaskPath "\Microsoft\Windows\PI\" -TaskName "Secure-Boot-Update" -ErrorAction Stop
                 Write-Log -Message "  Step 2: Scheduled task triggered successfully" -Level "SUCCESS"
+                
+                # Post-task result validation for Step 2
+                $step2Deadline = (Get-Date).AddSeconds(60)
+                do {
+                    Start-Sleep -Seconds 2
+                    $taskState2 = (Get-ScheduledTask -TaskPath "\Microsoft\Windows\PI\" -TaskName "Secure-Boot-Update" -ErrorAction SilentlyContinue).State
+                } while ($taskState2 -eq 'Running' -and (Get-Date) -lt $step2Deadline)
+                $step2Info = Get-ScheduledTaskInfo -TaskPath "\Microsoft\Windows\PI\" -TaskName "Secure-Boot-Update" -ErrorAction SilentlyContinue
+                if ($step2Info -and $step2Info.LastTaskResult -eq 0x80070002) {
+                    Write-Log -Message "  Step 2: Task failed with 0x80070002 (ERROR_FILE_NOT_FOUND)" -Level "ERROR"
+                    $fallbackSuccess = $false
+                }
+                elseif ($step2Info -and $step2Info.LastTaskResult -ne 0) {
+                    Write-Log -Message "  Step 2: Task returned non-zero result: 0x$($step2Info.LastTaskResult.ToString('X'))" -Level "WARNING"
+                }
+                else {
+                    Write-Log -Message "  Step 2: Task completed successfully" -Level "SUCCESS"
+                }
             }
             catch {
                 Write-Log -Message "  Step 2 FAILED: $($_.Exception.Message)" -Level "ERROR"
@@ -361,7 +492,7 @@ try {
             Write-Log -Message "  Step 2: Skipped due to Step 1 failure" -Level "WARNING"
         }
         
-        Write-Log -Message "--- End Fallback ---" -Level "INFO"
+        Write-Log -Message "--- End Fallback (Legacy) ---" -Level "INFO"
         
         if ($fallbackSuccess) {
             Write-Host "FALLBACK_APPLIED: Direct method triggered. CA2023 was: $ca2023Text. Reboot may be required."
