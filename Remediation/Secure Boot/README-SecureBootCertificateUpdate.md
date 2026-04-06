@@ -10,7 +10,9 @@ These Remediation scripts manage the full lifecycle of Secure Boot certificate t
 
 > **Key principle (v2.1):** A device is only reported as **COMPLIANT** when `WindowsUEFICA2023Capable = 2`, meaning the 2023 certificate is in the UEFI DB **and** the device is booting from it. Setting the registry opt-in alone is not sufficient.
 >
-> **New in v3.0:** Both scripts now accept `FallbackDays` (default: 30) and `TimestampRegPath` (default: `HKLM:\SOFTWARE\Mindcore\Secureboot`) parameters. If a device has been opted in for longer than `FallbackDays` without reaching compliance, the remediation script automatically falls back to the direct `AvailableUpdates` method (KB5025885 Mitigation 1+2), bypassing the Windows Update wait. Detection output includes countdown/status for the fallback timer.
+> **New in v4.0:** Integration with Microsoft's modern `WinCsFlags.exe` API for certificate deployment, completely bypassing the need for `.bin` payload files and preventing legacy `0x80070002` errors. Extensive diagnostic checks were added, including pre-flight payload validation for the legacy scheduled task, firmware-level UEFI DB verification (`Get-SecureBootUEFI`), and Secure Boot Event Log harvesting.
+>
+> **New in v3.0:** Both scripts now accept `FallbackDays` (default: 30) and `TimestampRegPath` (default: `HKLM:\SOFTWARE\Mindcore\Secureboot`) parameters. If a device has been opted in for longer than `FallbackDays` without reaching compliance, the remediation script automatically falls back to the direct methods (WinCS or AvailableUpdates), bypassing the Windows Update wait. Detection output includes countdown/status for the fallback timer.
 >
 > **New in v2.1:** Each detection run writes detailed diagnostic data to a local log file, including TPM status, BitLocker state, Windows Update health, pending reboot indicators, and a full Secure Boot registry dump. Stage-specific **WHY** and **NEXT STEPS** guidance helps IT pros quickly identify root causes without remote access.
 
@@ -75,7 +77,7 @@ Every device moves through a series of stages from initial detection to full com
 
 ## Scripts
 
-### Detection Script (v3.0)
+### Detection Script (v4.0)
 **File**: `Detect-SecureBootCertificateUpdate.ps1`
 
 **Parameters**:
@@ -92,7 +94,7 @@ Every device moves through a series of stages from initial detection to full com
 5. Device firmware version and attributes
 6. OS version (warns if Windows 10 past end of support)
 
-**Diagnostic Data (v2.1)** -- written to local log file on every detection run:
+**Diagnostic Data (v2.1 & v4.0)** -- written to local log file on every detection run:
 7. Last boot time and system uptime
 8. TPM status (present, enabled, activated, spec version)
 9. BitLocker status on OS drive (protection state, encryption status)
@@ -101,6 +103,7 @@ Every device moves through a series of stages from initial detection to full com
 12. Full Secure Boot registry dump (`Secureboot\*` and `SecureBoot\Servicing\*`)
 13. Stage-specific **WHY** / **NEXT STEPS** analysis per non-compliant stage
 14. Fallback timer countdown (v3.0) -- days remaining or `ACTIVE` status for Stages 2-4
+15. **(New in v4.0)** Payload folder health (`SecureBootUpdates`), legacy task execution results, WinCS API availability, raw UEFI firmware DB bytes, and Secure Boot Event Logs (IDs 1036, 1043, 1044, 1045, 1801, 1808).
 
 **Tiered Compliance Model**:
 
@@ -117,7 +120,7 @@ Every device moves through a series of stages from initial detection to full com
 - `0` = Compliant (Stage 5 -- booting from 2023 certificate chain)
 - `1` = Non-compliant (Stages 0-4 -- see output for specific stage)
 
-### Remediation Script (v3.0)
+### Remediation Script (v4.0)
 **File**: `Remediate-SecureBootCertificateUpdate.ps1`
 
 **Parameters**:
@@ -138,11 +141,11 @@ Every device moves through a series of stages from initial detection to full com
 5. Verifies the value was set correctly
 6. Writes `ManagedOptInDate` timestamp to `TimestampRegPath` for fallback tracking
 
-**Fallback Logic (v3.0)**:
+**Fallback Logic (v3.0 & v4.0)**:
 When the fallback timer exceeds `FallbackDays`:
-1. Checks that `\Microsoft\Windows\PI\Secure-Boot-Update` scheduled task exists
-2. If `WindowsUEFICA2023Capable < 1`: Sets `AvailableUpdates = 0x40` and triggers task (DB cert)
-3. Sets `AvailableUpdates = 0x100` and triggers task (boot manager)
+1. **(v4.0)** Checks if `WinCsFlags.exe` exists. If so, uses `WinCsFlags.exe /apply --key "F33E0C8E002"` as the primary, modern method.
+2. **(v4.0)** If WinCS is unavailable, performs a pre-flight check on `C:\Windows\System32\SecureBootUpdates\`.
+3. **(v3.0)** If the payload folder is healthy, sets `AvailableUpdates = 0x40` (DB cert) and `0x100` (boot manager) and triggers the legacy `\Microsoft\Windows\PI\Secure-Boot-Update` scheduled task.
 4. A reboot may be required after fallback completes
 
 **Intune Output Values**:
@@ -152,8 +155,10 @@ When the fallback timer exceeds `FallbackDays`:
 | `ALREADY_CONFIGURED: OptIn 0x5944 already set. CA2023: ...` | No action taken -- registry already correct |
 | `ALREADY_CONFIGURED: ... Fallback timer started.` | Timestamp backfilled for pre-v3.0 device |
 | `ALREADY_CONFIGURED: ... Fallback in Xd.` | Countdown to fallback activation |
-| `FALLBACK_APPLIED: Direct method triggered...` | Direct method triggered after threshold exceeded |
+| `FALLBACK_WINCS: WinCS applied key...` | (v4.0) WinCS modern API automatically transitioned certificates |
+| `FALLBACK_APPLIED: Direct method triggered...` | Direct legacy method triggered after threshold exceeded |
 | `FALLBACK_BLOCKED: Scheduled task not found...` | Required Windows KB not installed for fallback |
+| `FALLBACK_BLOCKED: No WinCS and no payload files...` | (v4.0) Missing `SecureBootUpdates` payload, aborting legacy task |
 | `FALLBACK_FAILED: Direct method encountered errors...` | Fallback attempted but failed |
 | `SUCCESS: MicrosoftUpdateManagedOptIn set to 0x5944...` | Registry value written and verified |
 | `FAILED: Secure Boot DISABLED...` | Cannot remediate without Secure Boot |
@@ -348,7 +353,7 @@ C:\ProgramData\Microsoft\IntuneManagementExtension\Logs\SecureBootCertificateUpd
 
 **Performance impact**: Diagnostic checks add approximately 0.5-1.2 seconds per detection run. The heaviest check is the Windows Update COM object query (~200-500ms). All checks are local with zero network calls.
 
-## Fallback Timer (v3.0)
+## Fallback Timer (v3.0 & v4.0)
 
 The fallback timer provides a safety net for devices where Windows Update fails to complete the certificate transition within the expected timeframe.
 
@@ -360,7 +365,7 @@ The fallback timer provides a safety net for devices where Windows Update fails 
    - If no timestamp exists -- backfills it (clock starts now)
    - If days elapsed < `FallbackDays` -- reports countdown, exits 0
    - If days elapsed >= `FallbackDays` -- triggers direct method automatically
-3. **Direct fallback**: Sets `AvailableUpdates` to `0x40` (DB cert) then `0x100` (boot manager) and runs the `\Microsoft\Windows\PI\Secure-Boot-Update` scheduled task
+3. **Direct fallback**: Automatically pivots to the modern `WinCsFlags.exe` API (v4.0). If unavailable, validates the local payload files and falls back to the legacy `Secure-Boot-Update` scheduled task (v3.0).
 
 ### Registry Values
 
@@ -383,9 +388,10 @@ Both the detection and remediation scripts must use the **same** `FallbackDays` 
 
 | Output | Exit Code | Meaning |
 |--------|-----------|---------|
-| `FALLBACK_APPLIED` | 0 | Direct method triggered successfully, reboot may be required |
-| `FALLBACK_BLOCKED` | 1 | Scheduled task missing -- required Windows KB not installed |
-| `FALLBACK_FAILED` | 1 | Direct method attempted but encountered errors |
+| `FALLBACK_WINCS` | 0 | (v4.0) Modern WinCS API successfully applied the F33E0C8E002 key |
+| `FALLBACK_APPLIED` | 0 | Direct legacy method triggered successfully, reboot may be required |
+| `FALLBACK_BLOCKED` | 1 | Scheduled task missing, or (v4.0) Payload folder missing/empty |
+| `FALLBACK_FAILED` | 1 | Fallback attempted but encountered errors |
 
 ## Troubleshooting
 
@@ -415,6 +421,7 @@ The log contains **WHY** and **NEXT STEPS** for each non-compliant stage, making
 - Registry permissions issue (rare)
 - Anti-malware blocking registry modifications
 - Device in maintenance mode/reboot pending
+- Legacy task missing `.bin` payload files (Error `0x80070002`). This is mitigated in v4.0 with pre-flight checks and `WinCsFlags.exe`.
 
 **Resolution**:
 1. Check the Secure Boot diagnostic log: `C:\ProgramData\Microsoft\IntuneManagementExtension\Logs\SecureBootCertificateUpdate.log`
@@ -498,6 +505,16 @@ The log contains **WHY** and **NEXT STEPS** for each non-compliant stage, making
 - **Windows Secure Boot certificate expiration and CA updates**: https://support.microsoft.com/en-us/topic/windows-secure-boot-certificate-expiration-and-ca-updates-7ff40d33-95dc-4c3c-8725-a9b95457578e
 
 ## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 4.0 | 2026-04-06 | **WinCS & Payload Validation**: Integrated the modern `WinCsFlags.exe` API as the primary certificate transition method to prevent `0x80070002` errors. Legacy scheduled task is now gated by a pre-flight payload validation check (`SecureBootUpdates` folder). **Firmware verification**: Added `Get-SecureBootUEFI db` to check raw NVRAM variables. Added event log harvesting (kernel-boot event IDs). |
+| 3.1 | 2026-04-05 | **Optimized execution**: Buffered logging in `List[string]` (flush to disk once per run). Stage 5 compliance check runs before expensive local diagnostics. |
+| 3.0 | 2026-03-27 | **Fallback timer**: configurable `FallbackDays`/`TimestampRegPath` parameters. When opt-in exceeds threshold without compliance, automatically triggers direct methods. Backfills timestamp on pre-v3.0 devices. |
+| 2.2 | 2026-02-19 | Fixed misleading display labels; suppress update statuses when CA2023 cert is already present. |
+| 2.1 | 2026-02-18 | **Local diagnostic logging**: added TPM, BitLocker, WU health, pending reboots, registry dump to local log file `SecureBootCertificateUpdate.log`. Added "WHY / NEXT STEPS" guidance. |
+| 2.0 | 2026-02-18 | Tiered compliance model; idempotent registry edits. |
+| 1.0 | 2026-01-15 | Initial script versions for June 2026 transition. |
 
 | Version | Date | Changes |
 |---------|------|---------|
