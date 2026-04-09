@@ -444,6 +444,18 @@ try {
         Write-Log -Message "--- Stage 5: COMPLIANT ---" -Level "SUCCESS"
         Write-Log -Message "  Device is booting from the 2023-signed boot manager" -Level "SUCCESS"
         Write-Log -Message "  The Secure Boot certificate transition is complete for this device" -Level "SUCCESS"
+
+        # Cleanup: remove tracking registry key now that transition is complete
+        if (Test-Path $TimestampRegPath) {
+            try {
+                Remove-Item -Path $TimestampRegPath -Recurse -Force -ErrorAction Stop
+                Write-Log -Message "  Cleanup: Removed $TimestampRegPath (no longer needed)" -Level "SUCCESS"
+            }
+            catch {
+                Write-Log -Message "  Cleanup: Could not remove $TimestampRegPath - $($_.Exception.Message)" -Level "WARNING"
+            }
+        }
+
         Write-Host "COMPLIANT | $details"
         Write-Log -Message "Detection Result: COMPLIANT - Stage 5 (exit 0)" -Level "SUCCESS"
         Write-Log -Message "========== DETECTION COMPLETED ==========" -Level "INFO"
