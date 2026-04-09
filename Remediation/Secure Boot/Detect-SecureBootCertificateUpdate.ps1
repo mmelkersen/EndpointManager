@@ -354,6 +354,18 @@ try {
     }
     
     if ($null -eq $optInValue -or $optInValue -eq 0) {
+        # Before triggering remediation, check if the device is already fully updated
+        $servicingPathEarly = "HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing"
+        $ca2023CapableEarly = (Get-ItemProperty -Path $servicingPathEarly -Name "WindowsUEFICA2023Capable" -ErrorAction SilentlyContinue).WindowsUEFICA2023Capable
+        if ($ca2023CapableEarly -eq 2) {
+            Write-Log -Message "MicrosoftUpdateManagedOptIn is NOT SET but device is already booting from 2023 cert chain - COMPLIANT" -Level "SUCCESS"
+            Write-Host "COMPLIANT | OptIn:NotSet | CA2023:In DB and booting from 2023 signed boot manager"
+            Write-Log -Message "Detection Result: COMPLIANT - Stage 5 (exit 0)" -Level "SUCCESS"
+            Write-Log -Message "========== DETECTION COMPLETED ==========" -Level "INFO"
+            Flush-Log
+            exit 0
+        }
+
         Write-Log -Message "MicrosoftUpdateManagedOptIn is NOT SET or 0 - Remediation required" -Level "WARNING"
         Write-Log -Message "--- Stage 1 Analysis ---" -Level "INFO"
         Write-Log -Message "  Registry Path: $regPath" -Level "INFO"

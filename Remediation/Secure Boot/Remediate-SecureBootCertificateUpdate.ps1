@@ -159,6 +159,54 @@ function Get-SecureBootStatus {
     return $false
 }
 
+function Get-FirmwareAgeStatus {
+    $result = @{
+        Manufacturer    = "Unknown"
+        Model           = "Unknown"
+        BiosVersion     = "Unknown"
+        ReleaseDate     = $null
+        AgeDays         = $null
+        IsStale         = $false
+        UpdateGuidance  = "Check your device manufacturer's support site for firmware updates."
+    }
+
+    try {
+        $bios = Get-CimInstance -ClassName Win32_BIOS -ErrorAction Stop
+        $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
+        $result.Manufacturer = ($cs.Manufacturer ?? "Unknown").Trim()
+        $result.Model = ($cs.Model ?? "Unknown").Trim()
+        $result.BiosVersion = $bios.SMBIOSBIOSVersion
+
+        if ($null -ne $bios.ReleaseDate) {
+            $result.ReleaseDate = $bios.ReleaseDate
+            $result.AgeDays = [math]::Floor(((Get-Date) - $bios.ReleaseDate).TotalDays)
+            $result.IsStale = ($result.AgeDays -gt 365)
+        }
+
+        # OEM-specific update guidance
+        $mfr = $result.Manufacturer.ToUpper()
+        switch -Wildcard ($mfr) {
+            "LENOVO*" {
+                $result.UpdateGuidance = "Update firmware via Lenovo Vantage, SCCM driver packs, or https://support.lenovo.com"
+            }
+            "DELL*" {
+                $result.UpdateGuidance = "Update firmware via Dell Command Update, Dell Support Assist, or https://www.dell.com/support"
+            }
+            { $_ -like "HP*" -or $_ -like "HEWLETT*" } {
+                $result.UpdateGuidance = "Update firmware via HP Support Assistant, HP Image Assistant, or https://support.hp.com"
+            }
+            "MICROSOFT*" {
+                $result.UpdateGuidance = "Update firmware via Windows Update (Surface drivers) or https://www.microsoft.com/surface/support"
+            }
+        }
+    }
+    catch {
+        # If WMI fails, return unknown - do not block remediation on query failure
+    }
+
+    return $result
+}
+
 function Get-SecureBootPayloadStatus {
     $payloadPath = "$env:SystemRoot\System32\SecureBootUpdates"
     $result = @{
@@ -212,6 +260,32 @@ try {
     else {
         Write-Log -Message "Secure Boot is ENABLED - Proceeding with remediation" -Level "SUCCESS"
     }
+    
+    # -- Firmware age gate: block remediation if firmware is more than 1 year old --
+    Write-Log -Message "Checking firmware age..." -Level "INFO"
+    $firmware = Get-FirmwareAgeStatus
+    Write-Log -Message "  Manufacturer: $($firmware.Manufacturer)" -Level "INFO"
+    Write-Log -Message "  Model: $($firmware.Model)" -Level "INFO"
+    Write-Log -Message "  BIOS Version: $($firmware.BiosVersion)" -Level "INFO"
+    if ($null -ne $firmware.ReleaseDate) {
+        Write-Log -Message "  Firmware Release Date: $($firmware.ReleaseDate.ToString('yyyy-MM-dd'))" -Level "INFO"
+        Write-Log -Message "  Firmware Age: $($firmware.AgeDays) days" -Level "INFO"
+    }
+    else {
+        Write-Log -Message "  Firmware Release Date: Unable to determine (skipping age gate)" -Level "WARNING"
+    }
+
+    if ($firmware.IsStale) {
+        Write-Log -Message "FIRMWARE TOO OLD: Firmware is $($firmware.AgeDays) days old (>365 days) - blocking remediation to avoid potential BSOD" -Level "ERROR"
+        Write-Log -Message "  Secure Boot certificate updates on outdated firmware can cause boot failures" -Level "ERROR"
+        Write-Log -Message "  $($firmware.UpdateGuidance)" -Level "ERROR"
+        Write-Host "BLOCKED_FIRMWARE_STALE: $($firmware.Manufacturer) $($firmware.Model) | BIOS: $($firmware.BiosVersion) | Released: $($firmware.ReleaseDate.ToString('yyyy-MM-dd')) ($($firmware.AgeDays)d old) | Action: Update firmware first"
+        Write-Log -Message "Remediation Result: BLOCKED_FIRMWARE_STALE (exit 1)" -Level "ERROR"
+        Write-Log -Message "========== REMEDIATION COMPLETED ==========" -Level "INFO"
+        Flush-Log
+        exit 1
+    }
+    Write-Log -Message "Firmware age check: PASSED" -Level "SUCCESS"
     
     # Define registry configuration
     $regPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Secureboot"
