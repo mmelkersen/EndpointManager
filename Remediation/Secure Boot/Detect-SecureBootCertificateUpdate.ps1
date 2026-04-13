@@ -9,19 +9,19 @@
     
     The script uses a tiered compliance model:
     - Stage 0: Secure Boot disabled (exit 1)
-    - Stage 1: MicrosoftUpdateManagedOptIn not configured (exit 1 - triggers remediation)
-    - Stage 2: OptIn configured, awaiting Windows Update processing (exit 1)
+    - Stage 1: AvailableUpdates not configured and no deployment timestamp (exit 1 - triggers remediation)
+    - Stage 2: Deployment configured, awaiting processing (exit 1)
     - Stage 3: Certificate updates in progress (exit 1)
     - Stage 4: CA2023 certificate in UEFI DB but not yet booting from it (exit 1)
-    - Stage 5: COMPLIANT - Booting from 2023 signed boot manager (exit 0)
+    - Stage 5: COMPLIANT - UEFICA2023Status = Updated or booting from 2023 signed boot manager (exit 0)
     
-    A device is only considered compliant when WindowsUEFICA2023Capable equals 2,
-    meaning the 2023 certificate is in the UEFI DB AND the device is booting from it.
+    A device is considered compliant only when UEFICA2023Status equals "Updated".
+    WindowsUEFICA2023Capable = 2 alone is not sufficient (DB key may be present without full transition).
     
-    Fallback Timer: If a device has been opted in for more than FallbackDays days
+    Fallback Timer: If a device has been configured for more than FallbackDays days
     without reaching compliance, the detection output indicates that the fallback
-    timer is active. The companion remediation script will then use the direct
-    AvailableUpdates method (KB5025885) instead of waiting for Windows Update.
+    timer is active. The companion remediation script will then use WinCS or the
+    direct AvailableUpdates method instead of waiting.
     
     Each detection run logs detailed diagnostic data locally including system uptime,
     TPM status, BitLocker state, Windows Update health, pending reboots, and a full
@@ -52,12 +52,18 @@
     Uses a 45-day fallback threshold and a custom registry path for the opt-in timestamp.
 
 .NOTES
-    Version:        4.0
+    Version:        5.0
     Author:         Mattias Melkersen
     Creation Date:  2026-01-15
     
     CHANGELOG
     ---------------
+    2026-04-13 - v5.0 - Aligned with Microsoft Secure Boot playbook (MM)
+                        Switched Stage 1 from MicrosoftUpdateManagedOptIn to AvailableUpdates + timestamp check
+                        Added UEFICA2023Status = Updated as sole Stage 5 compliance check (WindowsUEFICA2023Capable = 2 alone is no longer sufficient)
+                        Added UEFICA2023Error and UEFICA2023ErrorEvent to diagnostics and Write-Host output
+                        Added Event ID 1795 (firmware handoff error) to event log harvesting
+                        Added AvailableUpdates 0x4104 stuck state detection in Stage 3
     2026-04-06 - v4.0 - Added SecureBootUpdates payload folder validation to diagnose task error 0x80070002 (MM)
                         Added scheduled task last-run-result inspection (Get-SecureBootTaskStatus helper)
                         Added UEFICA2023Status registry check written by WinCS
@@ -287,7 +293,7 @@ function Get-SecureBootTaskStatus {
 #region Main Detection Logic
 try {
     Write-Log -Message "========== DETECTION STARTED ==========" -Level "INFO"
-    Write-Log -Message "Script Version: 4.0" -Level "INFO"
+    Write-Log -Message "Script Version: 5.0" -Level "INFO"
     Write-Log -Message "Computer: $env:COMPUTERNAME | User: $env:USERNAME" -Level "INFO"
     Write-Log -Message "PowerShell: $($PSVersionTable.PSVersion) | Process: $(if ([Environment]::Is64BitProcess) {'64-bit'} else {'32-bit'})" -Level "INFO"
     
@@ -343,45 +349,52 @@ try {
     }
     Write-Log -Message "Secure Boot is ENABLED" -Level "SUCCESS"
     
-    # -- Stage 1: MicrosoftUpdateManagedOptIn must be set --
-    Write-Log -Message "Checking MicrosoftUpdateManagedOptIn registry key..." -Level "INFO"
+    # -- Stage 1: Deployment must be triggered (AvailableUpdates set or timestamp exists) --
+    Write-Log -Message "Checking deployment status..." -Level "INFO"
     $regPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Secureboot"
-    $regName = "MicrosoftUpdateManagedOptIn"
     
-    $optInValue = $null
+    $availableUpdatesValue = $null
     if (Test-Path $regPath) {
-        $optInValue = (Get-ItemProperty -Path $regPath -Name $regName -ErrorAction SilentlyContinue).$regName
+        $availableUpdatesValue = (Get-ItemProperty -Path $regPath -Name "AvailableUpdates" -ErrorAction SilentlyContinue).AvailableUpdates
     }
     
-    if ($null -eq $optInValue -or $optInValue -eq 0) {
+    # Check timestamp as durable marker (AvailableUpdates bits clear as task processes)
+    $deploymentTimestamp = $null
+    if (Test-Path $TimestampRegPath) {
+        $deploymentTimestamp = (Get-ItemProperty -Path $TimestampRegPath -Name "ManagedOptInDate" -ErrorAction SilentlyContinue).ManagedOptInDate
+    }
+    
+    $deploymentTriggered = ($null -ne $availableUpdatesValue -and $availableUpdatesValue -ne 0) -or ($null -ne $deploymentTimestamp)
+    
+    if (-not $deploymentTriggered) {
         # Before triggering remediation, check if the device is already fully updated
         $servicingPathEarly = "HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing"
-        $ca2023CapableEarly = (Get-ItemProperty -Path $servicingPathEarly -Name "WindowsUEFICA2023Capable" -ErrorAction SilentlyContinue).WindowsUEFICA2023Capable
-        if ($ca2023CapableEarly -eq 2) {
-            Write-Log -Message "MicrosoftUpdateManagedOptIn is NOT SET but device is already booting from 2023 cert chain - COMPLIANT" -Level "SUCCESS"
-            Write-Host "COMPLIANT | OptIn:NotSet | CA2023:In DB and booting from 2023 signed boot manager"
+        $uefiStatusEarly = (Get-ItemProperty -Path $servicingPathEarly -Name "UEFICA2023Status" -ErrorAction SilentlyContinue).UEFICA2023Status
+        if ($uefiStatusEarly -eq "Updated") {
+            Write-Log -Message "Deployment not triggered but device is already compliant (UEFICA2023Status=Updated)" -Level "SUCCESS"
+            Write-Host "COMPLIANT | Deployment:NotTriggered | UEFICA2023Status=Updated"
             Write-Log -Message "Detection Result: COMPLIANT - Stage 5 (exit 0)" -Level "SUCCESS"
             Write-Log -Message "========== DETECTION COMPLETED ==========" -Level "INFO"
             Flush-Log
             exit 0
         }
 
-        Write-Log -Message "MicrosoftUpdateManagedOptIn is NOT SET or 0 - Remediation required" -Level "WARNING"
+        Write-Log -Message "Deployment NOT TRIGGERED - Remediation required" -Level "WARNING"
         Write-Log -Message "--- Stage 1 Analysis ---" -Level "INFO"
         Write-Log -Message "  Registry Path: $regPath" -Level "INFO"
-        Write-Log -Message "  Registry Path Exists: $(Test-Path $regPath)" -Level "INFO"
-        Write-Log -Message "  Current Value: $(if ($null -eq $optInValue) {'<does not exist>'} else {"$optInValue (0x$($optInValue.ToString('X')))"})" -Level "INFO"
-        Write-Log -Message "  Expected Value: 0x5944 (22852)" -Level "INFO"
-        Write-Log -Message "  WHY: The registry key that enables Secure Boot certificate updates via Windows Update is not configured" -Level "INFO"
-        Write-Log -Message "  NEXT STEPS: The remediation script will automatically set this value. No manual action required." -Level "INFO"
+        Write-Log -Message "  AvailableUpdates: $(if ($null -eq $availableUpdatesValue) {'<does not exist>'} else {"$availableUpdatesValue (0x$($availableUpdatesValue.ToString('X')))"})" -Level "INFO"
+        Write-Log -Message "  Deployment Timestamp: $(if ($null -eq $deploymentTimestamp) {'<does not exist>'} else {$deploymentTimestamp})" -Level "INFO"
+        Write-Log -Message "  Expected: AvailableUpdates = 0x5944 (22852)" -Level "INFO"
+        Write-Log -Message "  WHY: AvailableUpdates has not been set to trigger Secure Boot certificate deployment" -Level "INFO"
+        Write-Log -Message "  NEXT STEPS: The remediation script will automatically set AvailableUpdates = 0x5944. No manual action required." -Level "INFO"
         Write-Log -Message "--- End Stage 1 Analysis ---" -Level "INFO"
-        Write-Host "OPTIN_NOT_SET | Action: Remediation will configure registry"
+        Write-Host "DEPLOYMENT_NOT_TRIGGERED | Action: Remediation will set AvailableUpdates"
         Write-Log -Message "Detection Result: NON-COMPLIANT - Stage 1 (exit 1)" -Level "WARNING"
         Write-Log -Message "========== DETECTION COMPLETED ==========" -Level "INFO"
         Flush-Log
         exit 1
     }
-    Write-Log -Message "MicrosoftUpdateManagedOptIn is SET to 0x$($optInValue.ToString('X')) ($optInValue)" -Level "SUCCESS"
+    Write-Log -Message "Deployment TRIGGERED (AvailableUpdates: $(if ($null -ne $availableUpdatesValue) {"0x$($availableUpdatesValue.ToString('X'))"} else {'cleared'}) | Timestamp: $(if ($null -ne $deploymentTimestamp) {'exists'} else {'none'}))" -Level "SUCCESS"
     
     # Check fallback timer status
     $fallback = Get-FallbackStatus -RegPath $TimestampRegPath -Threshold $FallbackDays
@@ -394,7 +407,7 @@ try {
     
     # Check certificate deployment status
     Write-Log -Message "Checking certificate update deployment status..." -Level "INFO"
-    $availableUpdates = (Get-ItemProperty -Path $regPath -Name "AvailableUpdates" -ErrorAction SilentlyContinue).AvailableUpdates
+    $availableUpdates = $availableUpdatesValue
     $servicingPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing"
     $ca2023Capable = (Get-ItemProperty -Path $servicingPath -Name "WindowsUEFICA2023Capable" -ErrorAction SilentlyContinue).WindowsUEFICA2023Capable
     
@@ -414,17 +427,28 @@ try {
         Write-Log -Message "WindowsUEFICA2023Capable: Key not present (normal before Windows Update processes)" -Level "INFO"
     }
     
-    # Check UEFICA2023Status (written by WinCS when complete)
+    # Check UEFICA2023Status (primary compliance indicator per Microsoft guidance)
     $uefiCA2023Status = (Get-ItemProperty -Path $servicingPath -Name "UEFICA2023Status" -ErrorAction SilentlyContinue).UEFICA2023Status
     if ($null -ne $uefiCA2023Status) {
         Write-Log -Message "UEFICA2023Status: $uefiCA2023Status" -Level "INFO"
     }
     else {
-        Write-Log -Message "UEFICA2023Status: Key not present (set by WinCS when cert update completes)" -Level "INFO"
+        Write-Log -Message "UEFICA2023Status: Key not present (set when cert deployment processes)" -Level "INFO"
+    }
+    
+    # Check UEFICA2023Error (indicates deployment failure)
+    $uefiError = (Get-ItemProperty -Path $servicingPath -Name "UEFICA2023Error" -ErrorAction SilentlyContinue).UEFICA2023Error
+    $uefiErrorEvent = (Get-ItemProperty -Path $servicingPath -Name "UEFICA2023ErrorEvent" -ErrorAction SilentlyContinue).UEFICA2023ErrorEvent
+    if ($null -ne $uefiError -and $uefiError -ne 0) {
+        Write-Log -Message "UEFICA2023Error: 0x$($uefiError.ToString('X')) ($uefiError) - certificate deployment encountered an error" -Level "ERROR"
+        if ($null -ne $uefiErrorEvent) {
+            Write-Log -Message "UEFICA2023ErrorEvent: $uefiErrorEvent (check Windows System Event Log)" -Level "ERROR"
+        }
+        Write-Log -Message "  Reference: https://support.microsoft.com/topic/37e47cf8-608b-4a87-8175-bdead630eb69" -Level "WARNING"
     }
     
     # Build detail string for output (lightweight - no diagnostics needed)
-    $detailParts = @("OptIn:0x$($optInValue.ToString('X'))")
+    $detailParts = @()
     if ($null -ne $availableUpdates) {
         $updateStatus = Get-AvailableUpdatesStatus -Value $availableUpdates
         # Only include Updates detail if cert is not yet in DB (avoids confusion at Stage 4/5)
@@ -432,17 +456,27 @@ try {
             $detailParts += "Updates:$updateStatus"
         }
     }
+    if ($null -ne $uefiCA2023Status) {
+        $detailParts += "Status:$uefiCA2023Status"
+    }
     if ($null -ne $ca2023Capable) {
         $ca2023Status = Get-WindowsUEFICA2023Status -Value $ca2023Capable
         $detailParts += "CA2023:$ca2023Status"
     }
+    if ($null -ne $uefiError -and $uefiError -ne 0) {
+        $detailParts += "Error:0x$($uefiError.ToString('X'))"
+    }
     $details = $detailParts -join " | "
     
-    # -- Stage 5: COMPLIANT - Booting from 2023 cert chain --
-    # Check early to skip expensive diagnostic collection on compliant devices
-    if ($ca2023Capable -eq 2) {
+    # -- Stage 5: COMPLIANT --
+    # UEFICA2023Status = "Updated" is the authoritative compliance indicator per Microsoft guidance
+    # WindowsUEFICA2023Capable = 2 alone means the DB key is in firmware but the transition may not be complete
+    if ($uefiCA2023Status -eq "Updated") {
         Write-Log -Message "--- Stage 5: COMPLIANT ---" -Level "SUCCESS"
-        Write-Log -Message "  Device is booting from the 2023-signed boot manager" -Level "SUCCESS"
+        Write-Log -Message "  Compliance method: UEFICA2023Status=Updated" -Level "SUCCESS"
+        if ($ca2023Capable -eq 2) {
+            Write-Log -Message "  WindowsUEFICA2023Capable=2 (confirmed)" -Level "SUCCESS"
+        }
         Write-Log -Message "  The Secure Boot certificate transition is complete for this device" -Level "SUCCESS"
 
         # Cleanup: remove tracking registry key now that transition is complete
@@ -731,7 +765,7 @@ try {
     
     # Secure Boot event log harvesting
     Write-Log -Message "--- Secure Boot Event Log ---" -Level "INFO"
-    $sbEventIds = @(1036, 1043, 1044, 1045, 1801, 1808)
+    $sbEventIds = @(1036, 1043, 1044, 1045, 1795, 1801, 1808)
     try {
         $sbEvents = Get-WinEvent -FilterHashtable @{
             LogName = 'Microsoft-Windows-Kernel-Boot/Operational', 'System'
@@ -815,6 +849,12 @@ try {
         Write-Log -Message "  WHY: Windows Update is actively processing Secure Boot certificate updates" -Level "INFO"
         Write-Log -Message "  WHY: AvailableUpdates = 0x$($availableUpdates.ToString('X')) ($availableUpdates) indicates partial certificate deployment" -Level "INFO"
         Write-Log -Message "  WHY: Target value is 0x4000 (16384) = all certificates applied" -Level "INFO"
+        if ($availableUpdates -eq 0x4104) {
+            Write-Log -Message "  STUCK STATE: AvailableUpdates = 0x4104 - device cannot progress past KEK certificate deployment" -Level "ERROR"
+            Write-Log -Message "  ROOT CAUSE: The 0x0004 bit (KEK) is not clearing even after restarts" -Level "ERROR"
+            Write-Log -Message "  ACTION: Check with your OEM for a firmware update that supports the new KEK certificate" -Level "ERROR"
+            Write-Log -Message "  Reference: https://learn.microsoft.com/windows-hardware/manufacture/desktop/windows-secure-boot-key-creation-and-management-guidance" -Level "ERROR"
+        }
         if ($pendingRebootReasons.Count -gt 0) {
             Write-Log -Message "  Pending Reboot: $($pendingRebootReasons -join ', ') - a reboot may be required to continue WU processing" -Level "WARNING"
         }
@@ -834,9 +874,9 @@ try {
         exit 1
     }
     
-    # Stage 2: OptIn is set but Windows Update hasn't started processing yet
+    # Stage 2: Deployment triggered but Secure-Boot-Update task hasn't started processing yet
     Write-Log -Message "--- Stage 2 Analysis ---" -Level "INFO"
-    Write-Log -Message "  WHY: MicrosoftUpdateManagedOptIn is set (0x$($optInValue.ToString('X'))) but Windows Update has not yet started certificate deployment" -Level "INFO"
+    Write-Log -Message "  WHY: AvailableUpdates = 0x5944 was set but the Secure-Boot-Update task has not yet processed the certificate updates" -Level "INFO"
     if ($null -eq $availableUpdates) {
         Write-Log -Message "  WHY: AvailableUpdates key does not exist yet - Windows Update has not scanned for Secure Boot cert updates" -Level "INFO"
     }
