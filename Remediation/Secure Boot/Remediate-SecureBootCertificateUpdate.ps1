@@ -48,12 +48,13 @@
     Uses a 45-day fallback threshold and a custom registry path for the opt-in timestamp.
 
 .NOTES
-    Version:        4.0
+    Version:        4.1
     Author:         Mattias Melkersen
     Creation Date:  2026-01-15
     
     CHANGELOG
     ---------------
+    2026-04-13 - v4.1 - Fixed PS 5.1 compatibility: replaced ?? null-coalescing operators in Get-FirmwareAgeStatus (MM)
     2026-04-06 - v4.0 - WinCS (WinCsFlags.exe /apply) is now the preferred fallback method over AvailableUpdates (MM)
                         Added SecureBootUpdates payload folder pre-flight validation before task trigger
                         Legacy AvailableUpdates path retained only when WinCS unavailable and payloads present
@@ -173,8 +174,8 @@ function Get-FirmwareAgeStatus {
     try {
         $bios = Get-CimInstance -ClassName Win32_BIOS -ErrorAction Stop
         $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
-        $result.Manufacturer = ($cs.Manufacturer ?? "Unknown").Trim()
-        $result.Model = ($cs.Model ?? "Unknown").Trim()
+        $result.Manufacturer = $(if ($cs.Manufacturer) { $cs.Manufacturer } else { "Unknown" }).Trim()
+        $result.Model = $(if ($cs.Model) { $cs.Model } else { "Unknown" }).Trim()
         $result.BiosVersion = $bios.SMBIOSBIOSVersion
 
         if ($null -ne $bios.ReleaseDate) {
@@ -240,7 +241,7 @@ function Get-SecureBootPayloadStatus {
 #region Main Remediation Logic
 try {
     Write-Log -Message "========== REMEDIATION STARTED ==========" -Level "INFO"
-    Write-Log -Message "Script Version: 4.0" -Level "INFO"
+    Write-Log -Message "Script Version: 4.1" -Level "INFO"
     Write-Log -Message "Computer: $env:COMPUTERNAME | User: $env:USERNAME" -Level "INFO"
     Write-Log -Message "PowerShell: $($PSVersionTable.PSVersion) | Process: $(if ([Environment]::Is64BitProcess) {'64-bit'} else {'32-bit'})" -Level "INFO"
     
