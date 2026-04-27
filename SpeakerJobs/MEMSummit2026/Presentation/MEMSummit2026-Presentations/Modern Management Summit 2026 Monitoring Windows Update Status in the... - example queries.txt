@@ -1,0 +1,58 @@
+// Intune Multi-device query. Requires Advanced Analytics
+//
+// OS Build versions from active devices
+Device
+| where Platform == 'WINDOWS' and ManagementAgent endswith "MDM" and LastSeenDateTime > datetime(2026-03-19)
+| project DeviceName, OsVersion
+| summarize Count=count() by OsVersion
+| order by OsVersion desc
+
+// Intune Multi-device query. Requires Advanced Analytics
+//
+// Count of active devices within the last 30 days
+Device
+| where Platform == 'WINDOWS' and ManagementAgent endswith "MDM" and LastSeenDateTime > ago(30d)
+| count 
+
+// MDQ 
+// Check which devices that have the specific update installed
+WindowsQfe
+| where HotFixId == 'KB5066128'
+| project Device, HotFixId, InstalledDate, QfeDescription
+| order by InstalledDate desc
+
+// Log Analytics
+// Requires that from Intune devices are synced to Log analytics
+// Tenat admin --> Diagnostics settting --> define a Log analytics workspace and at least Devices has been selected. 
+//
+IntuneDevices
+| where TimeGenerated > ago(30d)
+| summarize arg_max(LastContact, *) by LastContactDate = bin(todatetime(LastContact), 1d), DeviceName
+| where LastContactDate > ago(30d)
+| summarize
+    CoManaged = countif(ManagedBy == "Co-managed"),
+    MDE = countif(ManagedBy == "MDE"),
+    Intune = countif(ManagedBy == "Intune")
+    by LastContactDate
+
+
+// WUfB Reports
+//
+// Number of daily active devices from the last 30 days
+UCClient 
+| where LastCensusScanTime > ago(30d)
+| summarize arg_max(LastCensusScanTime, *) by LastScanTime = bin(LastCensusScanTime, 1d), DeviceName
+| summarize DailyDeviceCount = count() by LastScanTime
+| order by LastScanTime asc
+| render columnchart
+
+// WUfB Reports
+//
+// Update status from active (seen last 7 days) Windows 11 devices
+UCClient 
+| summarize arg_max(LastCensusScanTime, *) by DeviceName
+| where LastCensusScanTime > (now() - 7d) and OSBuild startswith "10.0.2"
+| summarize count() by OSSecurityUpdateStatus, OSVersion
+| project OSVersion, OSSecurityUpdateStatus, Count=count_
+| order by OSVersion desc, OSSecurityUpdateStatus asc
+| render columnchart with (kind=stacked, series=OSVersion)
