@@ -52,12 +52,18 @@
     Uses a 45-day fallback threshold and a custom registry path for the opt-in timestamp.
 
 .NOTES
-    Version:        5.0
+    Version:        5.1
     Author:         Mattias Melkersen
     Creation Date:  2026-01-15
-    
+
     CHANGELOG
     ---------------
+    2026-05-13 - v5.1 - Fixed Stage 3 WHY contradiction for AvailableUpdates=0x4000 (was "partial" and "target" simultaneously) (MM)
+                        Surfaced ConfidenceLevel/BucketHash/ConfidenceUpdateType as named root cause in Stage 3 analysis
+                        Fixed Get-AvailableUpdatesStatus misleading "Complete" label for 0x4000 (WU is done, UEFI CA transition is not)
+                        Fixed 0KB .bin files treated as healthy in Get-SecureBootPayloadStatus; added EmptyBinCount to result
+                        Guarded Stage 5 cleanup against premature UEFICA2023Status=Updated when ManagedOptInDate < 30 minutes old
+                        Added $ScriptVersion variable (was hardcoded string)
     2026-04-13 - v5.0 - Aligned with Microsoft Secure Boot playbook (MM)
                         Switched Stage 1 from MicrosoftUpdateManagedOptIn to AvailableUpdates + timestamp check
                         Added UEFICA2023Status = Updated as sole Stage 5 compliance check (WindowsUEFICA2023Capable = 2 alone is no longer sufficient)
@@ -102,6 +108,8 @@ param(
     [Parameter(Mandatory = $false)]
     [string]$TimestampRegPath = "HKLM:\SOFTWARE\Mindcore\Secureboot"
 )
+
+[string]$ScriptVersion = "5.1"
 
 #region Logging Configuration
 [string]$LogFile = "$env:ProgramData\Microsoft\IntuneManagementExtension\Logs\SecureBootCertificateUpdate.log"
@@ -176,7 +184,7 @@ function Get-AvailableUpdatesStatus {
     
     switch ($Value) {
         22852 { return "Not Started - All updates pending (0x5944)" }
-        16384 { return "Complete - All certificates applied (0x4000)" }
+        16384 { return "WU phase complete - UEFI CA transition pending (0x4000)" }
         0     { return "No pending updates (0x0)" }
         default { return "In Progress (0x$($Value.ToString('X')))" }
     }
@@ -235,6 +243,7 @@ function Get-SecureBootPayloadStatus {
         FileCount     = 0
         Files         = @()
         HasBinFiles   = $false
+        EmptyBinCount = 0
         IsHealthy     = $false
     }
 
@@ -245,7 +254,9 @@ function Get-SecureBootPayloadStatus {
             if ($files) {
                 $result.FileCount = $files.Count
                 $result.Files = $files | ForEach-Object { "$($_.Name) ($([math]::Round($_.Length / 1KB, 1))KB)" }
-                $result.HasBinFiles = ($files | Where-Object { $_.Extension -eq '.bin' }).Count -gt 0
+                $binFiles = $files | Where-Object { $_.Extension -eq '.bin' }
+                $result.HasBinFiles = ($binFiles | Where-Object { $_.Length -gt 0 }).Count -gt 0
+                $result.EmptyBinCount = ($binFiles | Where-Object { $_.Length -eq 0 }).Count
                 $result.IsHealthy = $result.HasBinFiles
             }
         }
@@ -293,7 +304,7 @@ function Get-SecureBootTaskStatus {
 #region Main Detection Logic
 try {
     Write-Log -Message "========== DETECTION STARTED ==========" -Level "INFO"
-    Write-Log -Message "Script Version: 5.0" -Level "INFO"
+    Write-Log -Message "Script Version: $ScriptVersion" -Level "INFO"
     Write-Log -Message "Computer: $env:COMPUTERNAME | User: $env:USERNAME" -Level "INFO"
     Write-Log -Message "PowerShell: $($PSVersionTable.PSVersion) | Process: $(if ([Environment]::Is64BitProcess) {'64-bit'} else {'32-bit'})" -Level "INFO"
     
@@ -439,6 +450,9 @@ try {
     # Check UEFICA2023Error (indicates deployment failure)
     $uefiError = (Get-ItemProperty -Path $servicingPath -Name "UEFICA2023Error" -ErrorAction SilentlyContinue).UEFICA2023Error
     $uefiErrorEvent = (Get-ItemProperty -Path $servicingPath -Name "UEFICA2023ErrorEvent" -ErrorAction SilentlyContinue).UEFICA2023ErrorEvent
+    $confidenceLevel = (Get-ItemProperty -Path $servicingPath -Name "ConfidenceLevel" -ErrorAction SilentlyContinue).ConfidenceLevel
+    $confidenceUpdateType = (Get-ItemProperty -Path $servicingPath -Name "ConfidenceUpdateType" -ErrorAction SilentlyContinue).ConfidenceUpdateType
+    $bucketHash = (Get-ItemProperty -Path $servicingPath -Name "BucketHash" -ErrorAction SilentlyContinue).BucketHash
     if ($null -ne $uefiError -and $uefiError -ne 0) {
         Write-Log -Message "UEFICA2023Error: 0x$($uefiError.ToString('X')) ($uefiError) - certificate deployment encountered an error" -Level "ERROR"
         if ($null -ne $uefiErrorEvent) {
@@ -479,14 +493,30 @@ try {
         }
         Write-Log -Message "  The Secure Boot certificate transition is complete for this device" -Level "SUCCESS"
 
-        # Cleanup: remove tracking registry key now that transition is complete
+        # Cleanup: remove tracking registry key now that transition is complete.
+        # Guard: if ManagedOptInDate is less than 30 minutes old, UEFICA2023Status=Updated may be
+        # a transient state set by the just-triggered task. Defer cleanup to the next compliant run.
         if (Test-Path $TimestampRegPath) {
-            try {
-                Remove-Item -Path $TimestampRegPath -Recurse -Force -ErrorAction Stop
-                Write-Log -Message "  Cleanup: Removed $TimestampRegPath (no longer needed)" -Level "SUCCESS"
+            $skipCleanup = $false
+            $cleanupOptInStr = (Get-ItemProperty -Path $TimestampRegPath -Name "ManagedOptInDate" -ErrorAction SilentlyContinue).ManagedOptInDate
+            if ($cleanupOptInStr) {
+                try {
+                    $minutesSinceOptIn = ((Get-Date) - [datetime]::Parse($cleanupOptInStr)).TotalMinutes
+                    if ($minutesSinceOptIn -lt 30) {
+                        Write-Log -Message "  Cleanup: Deferred - ManagedOptInDate is $([math]::Round($minutesSinceOptIn, 1)) minutes old. UEFICA2023Status=Updated may be transient. Cleanup deferred to next compliant detection run." -Level "WARNING"
+                        $skipCleanup = $true
+                    }
+                }
+                catch {}
             }
-            catch {
-                Write-Log -Message "  Cleanup: Could not remove $TimestampRegPath - $($_.Exception.Message)" -Level "WARNING"
+            if (-not $skipCleanup) {
+                try {
+                    Remove-Item -Path $TimestampRegPath -Recurse -Force -ErrorAction Stop
+                    Write-Log -Message "  Cleanup: Removed $TimestampRegPath (no longer needed)" -Level "SUCCESS"
+                }
+                catch {
+                    Write-Log -Message "  Cleanup: Could not remove $TimestampRegPath - $($_.Exception.Message)" -Level "WARNING"
+                }
             }
         }
 
@@ -526,9 +556,12 @@ try {
             }
             if ($payload.HasBinFiles) {
                 Write-Log -Message "  Payload Health: HEALTHY - .bin payload files present" -Level "SUCCESS"
+                if ($payload.EmptyBinCount -gt 0) {
+                    Write-Log -Message "  WARNING: $($payload.EmptyBinCount) .bin file(s) are 0KB - not yet deployed for this firmware bucket by Microsoft" -Level "WARNING"
+                }
             }
             else {
-                Write-Log -Message "  Payload Health: WARNING - folder has files but no .bin payloads" -Level "WARNING"
+                Write-Log -Message "  Payload Health: WARNING - folder has files but no non-empty .bin payloads" -Level "WARNING"
             }
         }
         else {
@@ -843,23 +876,57 @@ try {
         exit 1
     }
     
-    # Stage 3: Certificate updates are actively being applied by Windows Update
+    # Stage 3: AvailableUpdates is in a non-zero, non-initial state and UEFICA2023Status is not yet Updated.
+    # 0x4000 means Windows Update finished its phase; remaining blocker is the UEFI CA transition (often confidence-gated).
+    # Other values mean the Secure-Boot-Update task is still clearing individual certificate bits.
     if ($null -ne $availableUpdates -and $availableUpdates -ne 0 -and $availableUpdates -ne 22852) {
         Write-Log -Message "--- Stage 3 Analysis ---" -Level "INFO"
-        Write-Log -Message "  WHY: Windows Update is actively processing Secure Boot certificate updates" -Level "INFO"
-        Write-Log -Message "  WHY: AvailableUpdates = 0x$($availableUpdates.ToString('X')) ($availableUpdates) indicates partial certificate deployment" -Level "INFO"
-        Write-Log -Message "  WHY: Target value is 0x4000 (16384) = all certificates applied" -Level "INFO"
-        if ($availableUpdates -eq 0x4104) {
-            Write-Log -Message "  STUCK STATE: AvailableUpdates = 0x4104 - device cannot progress past KEK certificate deployment" -Level "ERROR"
-            Write-Log -Message "  ROOT CAUSE: The 0x0004 bit (KEK) is not clearing even after restarts" -Level "ERROR"
+        Write-Log -Message "  AvailableUpdates = 0x$($availableUpdates.ToString('X')) ($availableUpdates) | UEFICA2023Status = $uefiCA2023Status" -Level "INFO"
+
+        if ($availableUpdates -eq 0x4000) {
+            # WU has finished its certificate deployment phase. The remaining gap is that UEFICA2023Status
+            # has not advanced to "Updated", which is most commonly caused by Microsoft's confidence gate.
+            Write-Log -Message "  WHY: Windows Update has completed certificate deployment (AvailableUpdates = 0x4000)" -Level "INFO"
+            Write-Log -Message "  WHY: UEFICA2023Status = $uefiCA2023Status - the UEFI CA 2023 certificate transition has not completed" -Level "INFO"
+            if ($null -ne $confidenceLevel) {
+                Write-Log -Message "  ConfidenceLevel: $confidenceLevel" -Level "INFO"
+                Write-Log -Message "  ConfidenceUpdateType: $confidenceUpdateType | BucketHash: $bucketHash" -Level "INFO"
+                if ($confidenceLevel -like "*Under Observation*" -or $confidenceLevel -like "*More Data Needed*") {
+                    Write-Log -Message "  ROOT CAUSE: Microsoft has not yet gathered sufficient telemetry for this firmware bucket to approve the UEFI CA 2023 transition" -Level "WARNING"
+                    Write-Log -Message "  The Secure-Boot-Update task runs successfully (0x0) but is gated by BucketConfidenceData.cab" -Level "WARNING"
+                    Write-Log -Message "  NEXT STEPS: Resolves automatically when Microsoft ships updated BucketConfidenceData.cab for this firmware bucket" -Level "INFO"
+                    Write-Log -Message "  NEXT STEPS: The 30-day fallback will activate if confidence data is not updated in time" -Level "INFO"
+                    Write-Log -Message "  NOTE: If ConfidenceLevel remains 'Under Observation', the WinCS fallback method may also be gated by the same mechanism" -Level "WARNING"
+                }
+                else {
+                    Write-Log -Message "  NEXT STEPS: Allow Windows Update to continue processing. A reboot may help advance the UEFI CA transition." -Level "INFO"
+                    Write-Log -Message "  NEXT STEPS: If stuck here for >30 days, check Windows Update health and run 'usoclient StartScan'" -Level "WARNING"
+                }
+            }
+            else {
+                Write-Log -Message "  ConfidenceLevel: not present (BucketConfidenceData.cab may not yet have assessed this firmware bucket)" -Level "INFO"
+                Write-Log -Message "  NEXT STEPS: Allow Windows Update to continue. This typically resolves after 1-2 quality update cycles." -Level "INFO"
+                Write-Log -Message "  NEXT STEPS: If stuck here for >30 days, check Windows Update health and run 'usoclient StartScan'" -Level "WARNING"
+            }
+        }
+        elseif ($availableUpdates -eq 0x4104) {
+            Write-Log -Message "  WHY: AvailableUpdates = 0x4104 - device is stuck at KEK certificate deployment" -Level "INFO"
+            Write-Log -Message "  STUCK STATE: The 0x0004 bit (KEK) is not clearing even after restarts" -Level "ERROR"
+            Write-Log -Message "  ROOT CAUSE: Firmware does not support the new KEK certificate" -Level "ERROR"
             Write-Log -Message "  ACTION: Check with your OEM for a firmware update that supports the new KEK certificate" -Level "ERROR"
             Write-Log -Message "  Reference: https://learn.microsoft.com/windows-hardware/manufacture/desktop/windows-secure-boot-key-creation-and-management-guidance" -Level "ERROR"
         }
+        else {
+            # In-progress: the Secure-Boot-Update task is incrementally clearing certificate bits
+            Write-Log -Message "  WHY: Windows Update is incrementally applying Secure Boot certificate updates" -Level "INFO"
+            Write-Log -Message "  WHY: AvailableUpdates bits are cleared as each update phase completes (target state: 0x4000)" -Level "INFO"
+            Write-Log -Message "  NEXT STEPS: Allow Windows Update to complete. This typically resolves after 1-2 quality update cycles." -Level "INFO"
+            Write-Log -Message "  NEXT STEPS: If stuck here for >30 days, check Windows Update health and run 'usoclient StartScan'" -Level "WARNING"
+        }
+
         if ($pendingRebootReasons.Count -gt 0) {
             Write-Log -Message "  Pending Reboot: $($pendingRebootReasons -join ', ') - a reboot may be required to continue WU processing" -Level "WARNING"
         }
-        Write-Log -Message "  NEXT STEPS: Allow Windows Update to complete. This typically resolves after 1-2 quality update cycles." -Level "INFO"
-        Write-Log -Message "  NEXT STEPS: If stuck here for >30 days, check Windows Update health and run 'usoclient StartScan'" -Level "WARNING"
         if ($fallback.TimestampExists -and $fallback.IsActive) {
             Write-Log -Message "  FALLBACK: Timer exceeded ($($fallback.DaysElapsed)d > $($FallbackDays)d) - remediation will use direct method on next run" -Level "WARNING"
         }

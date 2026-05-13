@@ -50,12 +50,15 @@
     Uses a 45-day fallback threshold and a custom registry path for the opt-in timestamp.
 
 .NOTES
-    Version:        5.0
+    Version:        5.1
     Author:         Mattias Melkersen
     Creation Date:  2026-01-15
-    
+
     CHANGELOG
     ---------------
+    2026-05-13 - v5.1 - Added ConfidenceLevel read and warning in WinCS fallback (may also be confidence-gated) (MM)
+                        Fixed 0KB .bin files treated as healthy in Get-SecureBootPayloadStatus; added EmptyBinCount to result
+                        Added $ScriptVersion variable (was hardcoded string)
     2026-04-13 - v5.0 - Aligned with Microsoft Secure Boot playbook (MM)
                         Switched primary deployment from MicrosoftUpdateManagedOptIn (CFR) to AvailableUpdates = 0x5944 (Option 2)
                         Added UEFICA2023Status = Updated as sole compliance check (WindowsUEFICA2023Capable = 2 alone is no longer sufficient)
@@ -100,6 +103,8 @@ param(
     [Parameter(Mandatory = $false)]
     [string]$TimestampRegPath = "HKLM:\SOFTWARE\Mindcore\Secureboot"
 )
+
+[string]$ScriptVersion = "5.1"
 
 #region Logging Configuration
 [string]$LogFile = "$env:ProgramData\Microsoft\IntuneManagementExtension\Logs\SecureBootCertificateUpdate.log"
@@ -224,6 +229,7 @@ function Get-SecureBootPayloadStatus {
         FileCount     = 0
         Files         = @()
         HasBinFiles   = $false
+        EmptyBinCount = 0
         IsHealthy     = $false
     }
 
@@ -234,7 +240,9 @@ function Get-SecureBootPayloadStatus {
             if ($files) {
                 $result.FileCount = $files.Count
                 $result.Files = $files | ForEach-Object { "$($_.Name) ($([math]::Round($_.Length / 1KB, 1))KB)" }
-                $result.HasBinFiles = ($files | Where-Object { $_.Extension -eq '.bin' }).Count -gt 0
+                $binFiles = $files | Where-Object { $_.Extension -eq '.bin' }
+                $result.HasBinFiles = ($binFiles | Where-Object { $_.Length -gt 0 }).Count -gt 0
+                $result.EmptyBinCount = ($binFiles | Where-Object { $_.Length -eq 0 }).Count
                 $result.IsHealthy = $result.HasBinFiles
             }
         }
@@ -250,7 +258,7 @@ function Get-SecureBootPayloadStatus {
 #region Main Remediation Logic
 try {
     Write-Log -Message "========== REMEDIATION STARTED ==========" -Level "INFO"
-    Write-Log -Message "Script Version: 5.0" -Level "INFO"
+    Write-Log -Message "Script Version: $ScriptVersion" -Level "INFO"
     Write-Log -Message "Computer: $env:COMPUTERNAME | User: $env:USERNAME" -Level "INFO"
     Write-Log -Message "PowerShell: $($PSVersionTable.PSVersion) | Process: $(if ([Environment]::Is64BitProcess) {'64-bit'} else {'32-bit'})" -Level "INFO"
     
@@ -313,7 +321,9 @@ try {
     # -- Compliance check: already fully updated? --
     $uefiCA2023Status = (Get-ItemProperty -Path $servicingPath -Name "UEFICA2023Status" -ErrorAction SilentlyContinue).UEFICA2023Status
     $ca2023Capable = (Get-ItemProperty -Path $servicingPath -Name "WindowsUEFICA2023Capable" -ErrorAction SilentlyContinue).WindowsUEFICA2023Capable
-    
+    $confidenceLevel = (Get-ItemProperty -Path $servicingPath -Name "ConfidenceLevel" -ErrorAction SilentlyContinue).ConfidenceLevel
+    $confidenceUpdateType = (Get-ItemProperty -Path $servicingPath -Name "ConfidenceUpdateType" -ErrorAction SilentlyContinue).ConfidenceUpdateType
+
     # UEFICA2023Status = "Updated" is the authoritative compliance indicator per Microsoft guidance
     # WindowsUEFICA2023Capable = 2 alone means the DB key is in firmware but the transition may not be complete
     if ($uefiCA2023Status -eq "Updated") {
@@ -454,6 +464,11 @@ try {
         if ($winCsAvailable) {
             # --- WinCS path (preferred) ---
             Write-Log -Message "  WinCsFlags.exe: AVAILABLE - using WinCS method (preferred)" -Level "SUCCESS"
+            if ($null -ne $confidenceLevel -and ($confidenceLevel -like "*Under Observation*" -or $confidenceLevel -like "*More Data Needed*")) {
+                Write-Log -Message "  NOTE: ConfidenceLevel = '$confidenceLevel' (ConfidenceUpdateType = $confidenceUpdateType)" -Level "WARNING"
+                Write-Log -Message "  WinCS key F33E0C8E002 may also be gated by BucketConfidenceData.cab for this firmware bucket" -Level "WARNING"
+                Write-Log -Message "  Applying anyway - effect depends on whether Microsoft has approved this firmware bucket" -Level "WARNING"
+            }
             try {
                 Write-Log -Message "  Applying WinCS key: WinCsFlags.exe /apply --key F33E0C8E002" -Level "INFO"
                 $winCsOutput = & $winCsPath /apply --key "F33E0C8E002" 2>&1
