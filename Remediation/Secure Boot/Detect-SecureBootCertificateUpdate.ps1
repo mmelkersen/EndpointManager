@@ -52,12 +52,21 @@
     Uses a 45-day fallback threshold and a custom registry path for the opt-in timestamp.
 
 .NOTES
-    Version:        5.1
+    Version:        5.2
     Author:         Mattias Melkersen
     Creation Date:  2026-01-15
 
     CHANGELOG
     ---------------
+    2026-05-13 - v5.2 - Added HighConfidenceOptOut read and surface in Stage 3 confidence-gated output with actionable tip (MM)
+                        Added explicit UEFICA2023Status=InProgress branch in Stage 3 (was misdiagnosed as confidence-gated)
+                        Fixed UEFI DB certificate search to byte-safe Latin1 encoding (ASCII replaced bytes >127 with '?')
+                        Aligned firmware info logging to Win32_BIOS (consistent source with remediate firmware age gate)
+                        Added ProviderName='Microsoft-Windows-Kernel-Boot' to event log filter to prevent false ID matches
+                        Added 0x4100 WU transition value to Get-AvailableUpdatesStatus switch
+                        Removed redundant $availableUpdatesValue alias; unified to $availableUpdates throughout
+                        Deduplicated Get-AvailableUpdatesStatus call; removed unused second $ca2023Status assignment
+                        Fixed Stage 2 WHY message: no longer claims 0x5944 was set when AvailableUpdates is null
     2026-05-13 - v5.1 - Fixed Stage 3 WHY contradiction for AvailableUpdates=0x4000 (was "partial" and "target" simultaneously) (MM)
                         Surfaced ConfidenceLevel/BucketHash/ConfidenceUpdateType as named root cause in Stage 3 analysis
                         Fixed Get-AvailableUpdatesStatus misleading "Complete" label for 0x4000 (WU is done, UEFI CA transition is not)
@@ -109,7 +118,7 @@ param(
     [string]$TimestampRegPath = "HKLM:\SOFTWARE\Mindcore\Secureboot"
 )
 
-[string]$ScriptVersion = "5.1"
+[string]$ScriptVersion = "5.2"
 
 #region Logging Configuration
 [string]$LogFile = "$env:ProgramData\Microsoft\IntuneManagementExtension\Logs\SecureBootCertificateUpdate.log"
@@ -185,6 +194,7 @@ function Get-AvailableUpdatesStatus {
     switch ($Value) {
         22852 { return "Not Started - All updates pending (0x5944)" }
         16384 { return "WU phase complete - UEFI CA transition pending (0x4000)" }
+        16640 { return "WU transition in flight (0x4100)" }
         0     { return "No pending updates (0x0)" }
         default { return "In Progress (0x$($Value.ToString('X')))" }
     }
@@ -364,9 +374,9 @@ try {
     Write-Log -Message "Checking deployment status..." -Level "INFO"
     $regPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Secureboot"
     
-    $availableUpdatesValue = $null
+    $availableUpdates = $null
     if (Test-Path $regPath) {
-        $availableUpdatesValue = (Get-ItemProperty -Path $regPath -Name "AvailableUpdates" -ErrorAction SilentlyContinue).AvailableUpdates
+        $availableUpdates = (Get-ItemProperty -Path $regPath -Name "AvailableUpdates" -ErrorAction SilentlyContinue).AvailableUpdates
     }
     
     # Check timestamp as durable marker (AvailableUpdates bits clear as task processes)
@@ -375,7 +385,7 @@ try {
         $deploymentTimestamp = (Get-ItemProperty -Path $TimestampRegPath -Name "ManagedOptInDate" -ErrorAction SilentlyContinue).ManagedOptInDate
     }
     
-    $deploymentTriggered = ($null -ne $availableUpdatesValue -and $availableUpdatesValue -ne 0) -or ($null -ne $deploymentTimestamp)
+    $deploymentTriggered = ($null -ne $availableUpdates -and $availableUpdates -ne 0) -or ($null -ne $deploymentTimestamp)
     
     if (-not $deploymentTriggered) {
         # Before triggering remediation, check if the device is already fully updated
@@ -393,7 +403,7 @@ try {
         Write-Log -Message "Deployment NOT TRIGGERED - Remediation required" -Level "WARNING"
         Write-Log -Message "--- Stage 1 Analysis ---" -Level "INFO"
         Write-Log -Message "  Registry Path: $regPath" -Level "INFO"
-        Write-Log -Message "  AvailableUpdates: $(if ($null -eq $availableUpdatesValue) {'<does not exist>'} else {"$availableUpdatesValue (0x$($availableUpdatesValue.ToString('X')))"})" -Level "INFO"
+        Write-Log -Message "  AvailableUpdates: $(if ($null -eq $availableUpdates) {'<does not exist>'} else {"$availableUpdates (0x$($availableUpdates.ToString('X')))"})" -Level "INFO"
         Write-Log -Message "  Deployment Timestamp: $(if ($null -eq $deploymentTimestamp) {'<does not exist>'} else {$deploymentTimestamp})" -Level "INFO"
         Write-Log -Message "  Expected: AvailableUpdates = 0x5944 (22852)" -Level "INFO"
         Write-Log -Message "  WHY: AvailableUpdates has not been set to trigger Secure Boot certificate deployment" -Level "INFO"
@@ -405,7 +415,7 @@ try {
         Flush-Log
         exit 1
     }
-    Write-Log -Message "Deployment TRIGGERED (AvailableUpdates: $(if ($null -ne $availableUpdatesValue) {"0x$($availableUpdatesValue.ToString('X'))"} else {'cleared'}) | Timestamp: $(if ($null -ne $deploymentTimestamp) {'exists'} else {'none'}))" -Level "SUCCESS"
+    Write-Log -Message "Deployment TRIGGERED (AvailableUpdates: $(if ($null -ne $availableUpdates) {"0x$($availableUpdates.ToString('X'))"} else {'cleared'}) | Timestamp: $(if ($null -ne $deploymentTimestamp) {'exists'} else {'none'}))" -Level "SUCCESS"
     
     # Check fallback timer status
     $fallback = Get-FallbackStatus -RegPath $TimestampRegPath -Threshold $FallbackDays
@@ -418,10 +428,10 @@ try {
     
     # Check certificate deployment status
     Write-Log -Message "Checking certificate update deployment status..." -Level "INFO"
-    $availableUpdates = $availableUpdatesValue
     $servicingPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing"
     $ca2023Capable = (Get-ItemProperty -Path $servicingPath -Name "WindowsUEFICA2023Capable" -ErrorAction SilentlyContinue).WindowsUEFICA2023Capable
-    
+
+    $updateStatus = $null
     if ($null -ne $availableUpdates) {
         $updateStatus = Get-AvailableUpdatesStatus -Value $availableUpdates
         Write-Log -Message "AvailableUpdates: $updateStatus (0x$($availableUpdates.ToString('X')))" -Level "INFO"
@@ -453,6 +463,7 @@ try {
     $confidenceLevel = (Get-ItemProperty -Path $servicingPath -Name "ConfidenceLevel" -ErrorAction SilentlyContinue).ConfidenceLevel
     $confidenceUpdateType = (Get-ItemProperty -Path $servicingPath -Name "ConfidenceUpdateType" -ErrorAction SilentlyContinue).ConfidenceUpdateType
     $bucketHash = (Get-ItemProperty -Path $servicingPath -Name "BucketHash" -ErrorAction SilentlyContinue).BucketHash
+    $highConfidenceOptOut = (Get-ItemProperty -Path $regPath -Name "HighConfidenceOptOut" -ErrorAction SilentlyContinue).HighConfidenceOptOut
     if ($null -ne $uefiError -and $uefiError -ne 0) {
         Write-Log -Message "UEFICA2023Error: 0x$($uefiError.ToString('X')) ($uefiError) - certificate deployment encountered an error" -Level "ERROR"
         if ($null -ne $uefiErrorEvent) {
@@ -463,19 +474,18 @@ try {
     
     # Build detail string for output (lightweight - no diagnostics needed)
     $detailParts = @()
-    if ($null -ne $availableUpdates) {
-        $updateStatus = Get-AvailableUpdatesStatus -Value $availableUpdates
-        # Only include Updates detail if cert is not yet in DB (avoids confusion at Stage 4/5)
-        if ($null -eq $ca2023Capable -or $ca2023Capable -lt 1) {
-            $detailParts += "Updates:$updateStatus"
-        }
+    # Only include Updates detail if cert is not yet in DB (avoids confusion at Stage 4/5)
+    if ($null -ne $availableUpdates -and ($null -eq $ca2023Capable -or $ca2023Capable -lt 1)) {
+        $detailParts += "Updates:$updateStatus"
     }
     if ($null -ne $uefiCA2023Status) {
         $detailParts += "Status:$uefiCA2023Status"
     }
     if ($null -ne $ca2023Capable) {
-        $ca2023Status = Get-WindowsUEFICA2023Status -Value $ca2023Capable
-        $detailParts += "CA2023:$ca2023Status"
+        $ca2023Short = switch ($ca2023Capable) {
+            0 { "NotInDB" } 1 { "InDB" } 2 { "InDB+Booting" } default { "Unknown($ca2023Capable)" }
+        }
+        $detailParts += "CA2023:$ca2023Short"
     }
     if ($null -ne $uefiError -and $uefiError -ne 0) {
         $detailParts += "Error:0x$($uefiError.ToString('X'))"
@@ -527,18 +537,20 @@ try {
         exit 0
     }
     
-    # Check device attributes
-    $deviceAttribPath = "$servicingPath\DeviceAttributes"
-    if (Test-Path $deviceAttribPath) {
-        $manufacturer = (Get-ItemProperty -Path $deviceAttribPath -Name "OEMManufacturerName" -ErrorAction SilentlyContinue).OEMManufacturerName
-        $model = (Get-ItemProperty -Path $deviceAttribPath -Name "OEMModelNumber" -ErrorAction SilentlyContinue).OEMModelNumber
-        $firmwareVersion = (Get-ItemProperty -Path $deviceAttribPath -Name "FirmwareVersion" -ErrorAction SilentlyContinue).FirmwareVersion
-        $firmwareDate = (Get-ItemProperty -Path $deviceAttribPath -Name "FirmwareReleaseDate" -ErrorAction SilentlyContinue).FirmwareReleaseDate
-        
-        if ($manufacturer) { Write-Log -Message "Device Manufacturer: $manufacturer" -Level "INFO" }
-        if ($model) { Write-Log -Message "Device Model: $model" -Level "INFO" }
-        if ($firmwareVersion) { Write-Log -Message "Firmware Version: $firmwareVersion" -Level "INFO" }
-        if ($firmwareDate) { Write-Log -Message "Firmware Release Date: $firmwareDate" -Level "INFO" }
+    # Check device attributes (Win32_BIOS for consistency with remediate firmware age gate)
+    try {
+        $biosInfo = Get-CimInstance -ClassName Win32_BIOS -ErrorAction Stop
+        $csInfo = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
+        Write-Log -Message "Device Manufacturer: $($csInfo.Manufacturer)" -Level "INFO"
+        Write-Log -Message "Device Model: $($csInfo.Model)" -Level "INFO"
+        Write-Log -Message "Firmware Version: $($biosInfo.SMBIOSBIOSVersion)" -Level "INFO"
+        if ($null -ne $biosInfo.ReleaseDate) {
+            $firmwareAgeDays = [math]::Floor(((Get-Date) - $biosInfo.ReleaseDate).TotalDays)
+            Write-Log -Message "Firmware Release Date: $($biosInfo.ReleaseDate.ToString('yyyy-MM-dd')) ($firmwareAgeDays days old)" -Level "INFO"
+        }
+    }
+    catch {
+        Write-Log -Message "Firmware info: Unable to query - $($_.Exception.Message)" -Level "WARNING"
     }
     
     # ===== DIAGNOSTIC DATA COLLECTION =====
@@ -638,8 +650,8 @@ try {
     Write-Log -Message "--- UEFI DB Certificate Verification ---" -Level "INFO"
     try {
         $dbBytes = (Get-SecureBootUEFI db -ErrorAction Stop).bytes
-        $dbContent = [System.Text.Encoding]::ASCII.GetString($dbBytes)
-        $hasCA2023InDB = $dbContent -match 'Windows UEFI CA 2023'
+        $dbLatin1 = [System.Text.Encoding]::Latin1.GetString($dbBytes)
+        $hasCA2023InDB = $dbLatin1.IndexOf('Windows UEFI CA 2023') -ge 0
         if ($hasCA2023InDB) {
             Write-Log -Message "  UEFI DB: Windows UEFI CA 2023 certificate FOUND in firmware DB" -Level "SUCCESS"
         }
@@ -801,8 +813,9 @@ try {
     $sbEventIds = @(1036, 1043, 1044, 1045, 1795, 1801, 1808)
     try {
         $sbEvents = Get-WinEvent -FilterHashtable @{
-            LogName = 'Microsoft-Windows-Kernel-Boot/Operational', 'System'
-            Id      = $sbEventIds
+            LogName      = 'Microsoft-Windows-Kernel-Boot/Operational', 'System'
+            Id           = $sbEventIds
+            ProviderName = 'Microsoft-Windows-Kernel-Boot'
         } -MaxEvents 20 -ErrorAction SilentlyContinue
         if ($sbEvents -and $sbEvents.Count -gt 0) {
             $grouped = $sbEvents | Group-Object -Property Id
@@ -847,7 +860,11 @@ try {
             $details += " | Fallback:$($fallback.DaysRemaining)d remaining"
         }
     }
-    
+    if ($null -ne $confidenceLevel -and ($confidenceLevel -like "*Under Observation*" -or $confidenceLevel -like "*More Data Needed*")) {
+        $hcoSuffix = if ($null -eq $highConfidenceOptOut) { ":NotSet" } else { ":$highConfidenceOptOut" }
+        $details += " | Confidence:UnderObservation | HighConfidenceOptOut$hcoSuffix"
+    }
+
     # Stage 4: CA2023 cert is in UEFI DB but device hasn't rebooted to use it yet
     if ($ca2023Capable -eq 1) {
         Write-Log -Message "--- Stage 4 Analysis ---" -Level "INFO"
@@ -884,11 +901,15 @@ try {
         Write-Log -Message "  AvailableUpdates = 0x$($availableUpdates.ToString('X')) ($availableUpdates) | UEFICA2023Status = $uefiCA2023Status" -Level "INFO"
 
         if ($availableUpdates -eq 0x4000) {
-            # WU has finished its certificate deployment phase. The remaining gap is that UEFICA2023Status
-            # has not advanced to "Updated", which is most commonly caused by Microsoft's confidence gate.
             Write-Log -Message "  WHY: Windows Update has completed certificate deployment (AvailableUpdates = 0x4000)" -Level "INFO"
             Write-Log -Message "  WHY: UEFICA2023Status = $uefiCA2023Status - the UEFI CA 2023 certificate transition has not completed" -Level "INFO"
-            if ($null -ne $confidenceLevel) {
+            if ($uefiCA2023Status -eq "InProgress") {
+                # Transition is actively occurring — do not misdiagnose as confidence-gated
+                Write-Log -Message "  STATUS: UEFICA2023Status=InProgress - the UEFI CA 2023 transition is actively processing" -Level "INFO"
+                Write-Log -Message "  NEXT STEPS: Do not interrupt. A reboot may be required to complete the transition." -Level "INFO"
+                Write-Log -Message "  NEXT STEPS: If InProgress persists beyond 2 reboots, check UEFICA2023Error for failure codes." -Level "WARNING"
+            }
+            elseif ($null -ne $confidenceLevel) {
                 Write-Log -Message "  ConfidenceLevel: $confidenceLevel" -Level "INFO"
                 Write-Log -Message "  ConfidenceUpdateType: $confidenceUpdateType | BucketHash: $bucketHash" -Level "INFO"
                 if ($confidenceLevel -like "*Under Observation*" -or $confidenceLevel -like "*More Data Needed*") {
@@ -897,6 +918,8 @@ try {
                     Write-Log -Message "  NEXT STEPS: Resolves automatically when Microsoft ships updated BucketConfidenceData.cab for this firmware bucket" -Level "INFO"
                     Write-Log -Message "  NEXT STEPS: The 30-day fallback will activate if confidence data is not updated in time" -Level "INFO"
                     Write-Log -Message "  NOTE: If ConfidenceLevel remains 'Under Observation', the WinCS fallback method may also be gated by the same mechanism" -Level "WARNING"
+                    Write-Log -Message "  HighConfidenceOptOut: $(if ($null -ne $highConfidenceOptOut) {$highConfidenceOptOut} else {'Not set (key does not exist)'})" -Level "INFO"
+                    Write-Log -Message "  OPTION: Set HighConfidenceOptOut=0 at $regPath to bypass confidence gating and force the UEFI CA transition (verify with Microsoft first)" -Level "WARNING"
                 }
                 else {
                     Write-Log -Message "  NEXT STEPS: Allow Windows Update to continue processing. A reboot may help advance the UEFI CA transition." -Level "INFO"
@@ -934,7 +957,14 @@ try {
             Write-Log -Message "  FALLBACK: $($fallback.DaysRemaining) days until direct method fallback activates" -Level "INFO"
         }
         Write-Log -Message "--- End Stage 3 Analysis ---" -Level "INFO"
-        Write-Host "CONFIGURED_UPDATE_IN_PROGRESS | $details | Action: Waiting for Windows Update"
+        $stage3Action = if ($uefiCA2023Status -eq "InProgress") {
+            "Action: UEFI CA transition in progress - await reboot"
+        } elseif ($availableUpdates -eq 0x4000 -and $null -ne $confidenceLevel -and ($confidenceLevel -like "*Under Observation*" -or $confidenceLevel -like "*More Data Needed*")) {
+            "Action: Awaiting Microsoft firmware bucket confidence approval"
+        } else {
+            "Action: Waiting for Windows Update"
+        }
+        Write-Host "CONFIGURED_UPDATE_IN_PROGRESS | $details | $stage3Action"
         Write-Log -Message "Detection Result: NON-COMPLIANT - Stage 3 (exit 1)" -Level "WARNING"
         Write-Log -Message "========== DETECTION COMPLETED ==========" -Level "INFO"
         Flush-Log
@@ -943,12 +973,11 @@ try {
     
     # Stage 2: Deployment triggered but Secure-Boot-Update task hasn't started processing yet
     Write-Log -Message "--- Stage 2 Analysis ---" -Level "INFO"
-    Write-Log -Message "  WHY: AvailableUpdates = 0x5944 was set but the Secure-Boot-Update task has not yet processed the certificate updates" -Level "INFO"
     if ($null -eq $availableUpdates) {
         Write-Log -Message "  WHY: AvailableUpdates key does not exist yet - Windows Update has not scanned for Secure Boot cert updates" -Level "INFO"
     }
     else {
-        Write-Log -Message "  WHY: AvailableUpdates = 0x$($availableUpdates.ToString('X')) ($availableUpdates) - waiting for WU to begin processing" -Level "INFO"
+        Write-Log -Message "  WHY: AvailableUpdates = 0x$($availableUpdates.ToString('X')) ($availableUpdates) - Secure-Boot-Update task has not yet begun processing" -Level "INFO"
     }
     if ($null -eq $ca2023Capable) {
         Write-Log -Message "  WHY: WindowsUEFICA2023Capable key does not exist yet - normal before Windows Update processes" -Level "INFO"

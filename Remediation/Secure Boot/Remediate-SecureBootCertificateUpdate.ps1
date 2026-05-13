@@ -50,12 +50,16 @@
     Uses a 45-day fallback threshold and a custom registry path for the opt-in timestamp.
 
 .NOTES
-    Version:        5.1
+    Version:        5.2
     Author:         Mattias Melkersen
     Creation Date:  2026-01-15
 
     CHANGELOG
     ---------------
+    2026-05-13 - v5.2 - Added HighConfidenceOptOut read and surface in ALREADY_CONFIGURED confidence-gated output (MM)
+                        Added 30-minute cleanup guard to ALREADY_COMPLIANT path (matches detect Stage 5 guard)
+                        Fixed ALREADY_COMPLIANT and FALLBACK_WINCS outputs to pipe-delimited format
+                        Added UEFICA2023Status=InProgress log note in ALREADY_CONFIGURED section
     2026-05-13 - v5.1 - Added ConfidenceLevel read and warning in WinCS fallback (may also be confidence-gated) (MM)
                         Fixed 0KB .bin files treated as healthy in Get-SecureBootPayloadStatus; added EmptyBinCount to result
                         Added $ScriptVersion variable (was hardcoded string)
@@ -104,7 +108,7 @@ param(
     [string]$TimestampRegPath = "HKLM:\SOFTWARE\Mindcore\Secureboot"
 )
 
-[string]$ScriptVersion = "5.1"
+[string]$ScriptVersion = "5.2"
 
 #region Logging Configuration
 [string]$LogFile = "$env:ProgramData\Microsoft\IntuneManagementExtension\Logs\SecureBootCertificateUpdate.log"
@@ -297,7 +301,7 @@ try {
         Write-Log -Message "FIRMWARE TOO OLD: Firmware is $($firmware.AgeDays) days old (>365 days) - blocking remediation to avoid potential BSOD" -Level "ERROR"
         Write-Log -Message "  Secure Boot certificate updates on outdated firmware can cause boot failures" -Level "ERROR"
         Write-Log -Message "  $($firmware.UpdateGuidance)" -Level "ERROR"
-        Write-Host "BLOCKED_FIRMWARE_STALE: $($firmware.Manufacturer) $($firmware.Model) | BIOS: $($firmware.BiosVersion) | Released: $($firmware.ReleaseDate.ToString('yyyy-MM-dd')) ($($firmware.AgeDays)d old) | Action: Update firmware first"
+        Write-Host "BLOCKED_FIRMWARE_STALE | $($firmware.Manufacturer) $($firmware.Model) | BIOS:$($firmware.BiosVersion) ($($firmware.AgeDays)d old, max 365d) | Remediation blocked until firmware is updated | $($firmware.UpdateGuidance)"
         Write-Log -Message "Remediation Result: BLOCKED_FIRMWARE_STALE (exit 1)" -Level "ERROR"
         Write-Log -Message "========== REMEDIATION COMPLETED ==========" -Level "INFO"
         Flush-Log
@@ -307,6 +311,7 @@ try {
     
     # -- Pre-check: UEFICA2023Error --
     $servicingPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing"
+    $regPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Secureboot"
     $uefiError = (Get-ItemProperty -Path $servicingPath -Name "UEFICA2023Error" -ErrorAction SilentlyContinue).UEFICA2023Error
     $uefiErrorEvent = (Get-ItemProperty -Path $servicingPath -Name "UEFICA2023ErrorEvent" -ErrorAction SilentlyContinue).UEFICA2023ErrorEvent
     if ($null -ne $uefiError -and $uefiError -ne 0) {
@@ -323,6 +328,7 @@ try {
     $ca2023Capable = (Get-ItemProperty -Path $servicingPath -Name "WindowsUEFICA2023Capable" -ErrorAction SilentlyContinue).WindowsUEFICA2023Capable
     $confidenceLevel = (Get-ItemProperty -Path $servicingPath -Name "ConfidenceLevel" -ErrorAction SilentlyContinue).ConfidenceLevel
     $confidenceUpdateType = (Get-ItemProperty -Path $servicingPath -Name "ConfidenceUpdateType" -ErrorAction SilentlyContinue).ConfidenceUpdateType
+    $highConfidenceOptOut = (Get-ItemProperty -Path $regPath -Name "HighConfidenceOptOut" -ErrorAction SilentlyContinue).HighConfidenceOptOut
 
     # UEFICA2023Status = "Updated" is the authoritative compliance indicator per Microsoft guidance
     # WindowsUEFICA2023Capable = 2 alone means the DB key is in firmware but the transition may not be complete
@@ -331,15 +337,29 @@ try {
         if ($ca2023Capable -eq 2) { $complianceMethod += " + CA2023Capable=2" }
         Write-Log -Message "Device is ALREADY COMPLIANT ($complianceMethod) - no remediation needed" -Level "SUCCESS"
         if (Test-Path $TimestampRegPath) {
-            try {
-                Remove-Item -Path $TimestampRegPath -Recurse -Force -ErrorAction Stop
-                Write-Log -Message "Cleanup: Removed $TimestampRegPath (no longer needed)" -Level "SUCCESS"
+            $skipCleanup = $false
+            $cleanupOptInStr = (Get-ItemProperty -Path $TimestampRegPath -Name "ManagedOptInDate" -ErrorAction SilentlyContinue).ManagedOptInDate
+            if ($cleanupOptInStr) {
+                try {
+                    $minutesSinceOptIn = ((Get-Date) - [datetime]::Parse($cleanupOptInStr)).TotalMinutes
+                    if ($minutesSinceOptIn -lt 30) {
+                        Write-Log -Message "Cleanup: Deferred - ManagedOptInDate is $([math]::Round($minutesSinceOptIn, 1)) minutes old. UEFICA2023Status=Updated may be transient. Deferring to next run." -Level "WARNING"
+                        $skipCleanup = $true
+                    }
+                }
+                catch {}
             }
-            catch {
-                Write-Log -Message "Cleanup: Could not remove $TimestampRegPath - $($_.Exception.Message)" -Level "WARNING"
+            if (-not $skipCleanup) {
+                try {
+                    Remove-Item -Path $TimestampRegPath -Recurse -Force -ErrorAction Stop
+                    Write-Log -Message "Cleanup: Removed $TimestampRegPath (no longer needed)" -Level "SUCCESS"
+                }
+                catch {
+                    Write-Log -Message "Cleanup: Could not remove $TimestampRegPath - $($_.Exception.Message)" -Level "WARNING"
+                }
             }
         }
-        Write-Host "ALREADY_COMPLIANT: $complianceMethod. Secure Boot certificate transition complete."
+        Write-Host "ALREADY_COMPLIANT | $complianceMethod"
         Write-Log -Message "Remediation Result: ALREADY_COMPLIANT (exit 0)" -Level "SUCCESS"
         Write-Log -Message "========== REMEDIATION COMPLETED ==========" -Level "INFO"
         Flush-Log
@@ -352,7 +372,6 @@ try {
     }
     
     # Define registry configuration
-    $regPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Secureboot"
     $regName = "AvailableUpdates"
     $regValue = 0x5944  # Deploy all certificates and 2023 boot manager (per Microsoft playbook Option 2)
     $regType = "DWord"
@@ -374,10 +393,7 @@ try {
     
     if ($deploymentTriggered) {
         $ca2023Text = switch ($ca2023Capable) {
-            0 { "Not in DB" }
-            1 { "In DB" }
-            2 { "In DB and booting from 2023 cert" }
-            default { "Pending" }
+            0 { "NotInDB" } 1 { "InDB" } 2 { "InDB+Booting" } default { "Pending" }
         }
         
         Write-Log -Message "--- Idempotency: Deployment Already Triggered ---" -Level "INFO"
@@ -396,8 +412,11 @@ try {
             Write-Log -Message "  Last Boot: $($remLastBoot.ToString('yyyy-MM-dd HH:mm:ss'))" -Level "INFO"
         }
         catch {}
+        if ($uefiCA2023Status -eq "InProgress") {
+            Write-Log -Message "  UEFICA2023Status: InProgress - UEFI CA 2023 transition is actively processing, do not interrupt" -Level "INFO"
+        }
         Write-Log -Message "--- End Idempotency Check ---" -Level "INFO"
-        
+
         # If AvailableUpdates was not set (legacy CFR path or bits fully cleared), set it now to accelerate
         if ($null -eq $existingValue -or $existingValue -eq 0) {
             Write-Log -Message "AvailableUpdates not set - setting to 0x$($regValue.ToString('X')) to accelerate deployment" -Level "INFO"
@@ -426,8 +445,15 @@ try {
             catch {
                 Write-Log -Message "  WARNING: Could not backfill ManagedOptInDate: $($_.Exception.Message)" -Level "WARNING"
             }
+            if ($null -ne $confidenceLevel -and ($confidenceLevel -like "*Under Observation*" -or $confidenceLevel -like "*More Data Needed*")) {
+                Write-Log -Message "  HighConfidenceOptOut: $(if ($null -ne $highConfidenceOptOut) {$highConfidenceOptOut} else {'Not set'})" -Level "INFO"
+                Write-Log -Message "  OPTION: Set HighConfidenceOptOut=0 at $regPath to bypass confidence gating (verify with Microsoft first)" -Level "WARNING"
+            }
             Write-Log -Message "--- End Fallback Timer Check ---" -Level "INFO"
-            Write-Host "ALREADY_CONFIGURED: AvailableUpdates deployment triggered. CA2023: $ca2023Text. Fallback timer started."
+            $hcoNote = if ($null -ne $confidenceLevel -and ($confidenceLevel -like "*Under Observation*" -or $confidenceLevel -like "*More Data Needed*")) {
+                " | Confidence:UnderObservation | HighConfidenceOptOut:$(if ($null -eq $highConfidenceOptOut) {'NotSet'} else {$highConfidenceOptOut})"
+            } else { "" }
+            Write-Host "ALREADY_CONFIGURED | CA2023:$ca2023Text$hcoNote | Fallback timer started (threshold: $FallbackDays days)"
             Write-Log -Message "Remediation Result: ALREADY_CONFIGURED (exit 0)" -Level "SUCCESS"
             Write-Log -Message "========== REMEDIATION COMPLETED ==========" -Level "INFO"
             Flush-Log
@@ -444,8 +470,15 @@ try {
         if ($daysElapsed -lt $FallbackDays) {
             # Threshold not yet reached
             Write-Log -Message "  Fallback not yet active - $daysRemaining days remaining" -Level "INFO"
+            if ($null -ne $confidenceLevel -and ($confidenceLevel -like "*Under Observation*" -or $confidenceLevel -like "*More Data Needed*")) {
+                Write-Log -Message "  HighConfidenceOptOut: $(if ($null -ne $highConfidenceOptOut) {$highConfidenceOptOut} else {'Not set'})" -Level "INFO"
+                Write-Log -Message "  OPTION: Set HighConfidenceOptOut=0 at $regPath to bypass confidence gating (verify with Microsoft first)" -Level "WARNING"
+            }
             Write-Log -Message "--- End Fallback Timer Check ---" -Level "INFO"
-            Write-Host "ALREADY_CONFIGURED: AvailableUpdates deployment triggered. CA2023: $ca2023Text. Fallback in $($daysRemaining)d."
+            $hcoNote = if ($null -ne $confidenceLevel -and ($confidenceLevel -like "*Under Observation*" -or $confidenceLevel -like "*More Data Needed*")) {
+                " | Confidence:UnderObservation | HighConfidenceOptOut:$(if ($null -eq $highConfidenceOptOut) {'NotSet'} else {$highConfidenceOptOut})"
+            } else { "" }
+            Write-Host "ALREADY_CONFIGURED | CA2023:$ca2023Text | Active:$($daysElapsed)d$hcoNote | Fallback:$($daysRemaining)d remaining"
             Write-Log -Message "Remediation Result: ALREADY_CONFIGURED (exit 0)" -Level "SUCCESS"
             Write-Log -Message "========== REMEDIATION COMPLETED ==========" -Level "INFO"
             Flush-Log
@@ -491,7 +524,7 @@ try {
                     Write-Log -Message "  Secure-Boot-Update task not found - WinCS will process on next TPMTasks cycle" -Level "INFO"
                 }
                 Write-Log -Message "--- End Fallback (WinCS) ---" -Level "INFO"
-                Write-Host "FALLBACK_WINCS: WinCS applied key F33E0C8E002. CA2023 was: $ca2023Text. Reboot required."
+                Write-Host "FALLBACK_WINCS | CA2023:$ca2023Text | Key:F33E0C8E002 applied | Reboot required"
                 Write-Log -Message "Remediation Result: FALLBACK_WINCS (exit 0)" -Level "SUCCESS"
                 Write-Log -Message "========== REMEDIATION COMPLETED ==========" -Level "INFO"
                 Flush-Log
